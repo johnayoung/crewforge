@@ -2,9 +2,12 @@
 Integration tests for CLI with prompt templates.
 
 Tests the integration between the CLI interface and the prompt template functionality.
+All tests use temporary directories to avoid creating test projects in the repository.
 """
 
 import pytest
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch
 from click.testing import CliRunner
 
@@ -17,6 +20,15 @@ from crewforge.prompt_templates import PromptTemplates
 def cli_runner():
     """Create a Click CLI runner for testing."""
     return CliRunner()
+
+
+def invoke_with_temp_dir(runner, args, **kwargs):
+    """Helper function to invoke CLI commands with a temporary directory."""
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Add --output-dir to args if not already present
+        if "--output-dir" not in args and "-o" not in args:
+            args = args + ["--output-dir", temp_dir]
+        return runner.invoke(create, args, **kwargs)
 
 
 @pytest.fixture
@@ -94,7 +106,9 @@ class TestCLIIntegration:
 
         mock_llm_client_class.side_effect = LLMError("API key not found")
 
-        result = cli_runner.invoke(create, ["test-project", "Create a test project"])
+        result = invoke_with_temp_dir(
+            cli_runner, ["test-project", "Create a test project"]
+        )
 
         # CLI should gracefully handle LLM errors and fall back to demo mode
         assert result.exit_code == 0
@@ -134,7 +148,7 @@ class TestCLIIntegration:
 
     def test_create_command_empty_prompt_non_interactive(self, cli_runner):
         """Test handling of missing prompt without interactive mode."""
-        result = cli_runner.invoke(create, ["test-project"])
+        result = invoke_with_temp_dir(cli_runner, ["test-project"])
 
         assert result.exit_code == 1
         assert "Please provide a prompt or use --interactive mode" in result.output
@@ -172,18 +186,20 @@ class TestCLIIntegration:
                 "dependencies": ["crewai"],
             }
 
-            result = cli_runner.invoke(create, ["test-project", "--interactive"])
+            result = invoke_with_temp_dir(cli_runner, ["test-project", "--interactive"])
 
             assert result.exit_code == 0
             mock_prompt.assert_called_once()
 
     def test_create_command_invalid_project_name(self, cli_runner):
         """Test handling of invalid project names."""
-        result = cli_runner.invoke(create, ["", "Test prompt"])
+        result = invoke_with_temp_dir(cli_runner, ["", "Test prompt"])
         assert result.exit_code == 1
         assert "Project name cannot be empty" in result.output
 
-        result = cli_runner.invoke(create, ["invalid name with spaces", "Test prompt"])
+        result = invoke_with_temp_dir(
+            cli_runner, ["invalid name with spaces", "Test prompt"]
+        )
         assert result.exit_code == 1
         # The actual error message from the CLI
         assert "must contain at least one alphanumeric character" in result.output

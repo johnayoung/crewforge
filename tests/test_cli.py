@@ -2,11 +2,15 @@
 Test the CLI command entry point and help documentation.
 
 Tests for the main command interface, help text, error handling,
-and basic command structure.
+and basic command structure. All tests use temporary directories
+to avoid creating test projects in the repository.
 """
 
 import os
 import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import patch, Mock
 from click.testing import CliRunner
 import pytest
 
@@ -79,34 +83,98 @@ class TestCreateCommand:
         assert result.exit_code != 0
         assert "Missing argument" in result.output or "Usage:" in result.output
 
-    def test_create_command_with_project_name_and_prompt(self):
+    @patch("crewforge.cli.CrewAIScaffolder")
+    @patch("crewforge.cli.PromptTemplates")
+    @patch("crewforge.cli.LLMClient")
+    def test_create_command_with_project_name_and_prompt(
+        self, mock_llm, mock_templates, mock_scaffolder
+    ):
         """Test create command with both project name and prompt."""
-        result = self.runner.invoke(create, ["test-project", "A simple test project"])
+        # Mock LLM components to avoid actual API calls
+        mock_llm_instance = Mock()
+        mock_llm.return_value = mock_llm_instance
 
-        assert result.exit_code == 0
-        assert "test-project" in result.output
-        assert "A simple test project" in result.output
-        assert "CrewForge v" in result.output
+        mock_templates_instance = Mock()
+
+        async def mock_extract():
+            return {
+                "project_name": "test-project",
+                "project_description": "A simple test project",
+                "agents": [{"role": "TestAgent"}],
+                "tasks": [{"name": "test_task"}],
+                "dependencies": ["crewai"],
+            }
+
+        mock_templates_instance.extract_project_spec = Mock(return_value=mock_extract())
+        mock_templates.return_value = mock_templates_instance
+
+        # Mock scaffolder
+        mock_scaffolder_instance = Mock()
+        mock_scaffolder_instance.check_crewai_available.return_value = False
+        mock_scaffolder.return_value = mock_scaffolder_instance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self.runner.invoke(
+                create,
+                ["test-project", "A simple test project", "--output-dir", temp_dir],
+            )
+
+            assert result.exit_code == 0
+            assert "test-project" in result.output
+            assert "A simple test project" in result.output
+            assert "CrewForge v" in result.output
 
     def test_create_command_with_project_name_only_non_interactive(self):
         """Test create command with project name only (non-interactive) shows error."""
-        result = self.runner.invoke(create, ["test-project"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self.runner.invoke(
+                create, ["test-project", "--output-dir", temp_dir]
+            )
 
-        assert result.exit_code == 1  # Should exit with error code
-        assert "Please provide a prompt or use --interactive mode" in result.output
+            assert result.exit_code == 1  # Should exit with error code
+            assert "Please provide a prompt or use --interactive mode" in result.output
 
-    def test_create_command_interactive_mode(self):
+    @patch("crewforge.cli.CrewAIScaffolder")
+    @patch("crewforge.cli.PromptTemplates")
+    @patch("crewforge.cli.LLMClient")
+    def test_create_command_interactive_mode(
+        self, mock_llm, mock_templates, mock_scaffolder
+    ):
         """Test create command with interactive flag."""
-        # Simulate user input for interactive prompt
-        result = self.runner.invoke(
-            create,
-            ["test-project", "--interactive"],
-            input="A test project for interactive mode\n",
-        )
+        # Mock LLM components
+        mock_llm_instance = Mock()
+        mock_llm.return_value = mock_llm_instance
 
-        assert result.exit_code == 0
-        assert "test-project" in result.output
-        assert "A test project for interactive mode" in result.output
+        mock_templates_instance = Mock()
+
+        async def mock_extract():
+            return {
+                "project_name": "test-project",
+                "project_description": "A test project for interactive mode",
+                "agents": [{"role": "TestAgent"}],
+                "tasks": [{"name": "test_task"}],
+                "dependencies": ["crewai"],
+            }
+
+        mock_templates_instance.extract_project_spec = Mock(return_value=mock_extract())
+        mock_templates.return_value = mock_templates_instance
+
+        # Mock scaffolder
+        mock_scaffolder_instance = Mock()
+        mock_scaffolder_instance.check_crewai_available.return_value = False
+        mock_scaffolder.return_value = mock_scaffolder_instance
+
+        # Simulate user input for interactive prompt
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self.runner.invoke(
+                create,
+                ["test-project", "--interactive", "--output-dir", temp_dir],
+                input="A test project for interactive mode\n",
+            )
+
+            assert result.exit_code == 0
+            assert "test-project" in result.output
+            assert "A test project for interactive mode" in result.output
 
     def test_create_command_with_output_dir(self):
         """Test create command with custom output directory."""
@@ -117,12 +185,43 @@ class TestCreateCommand:
         assert result.exit_code == 0
         assert "/tmp/test" in result.output
 
-    def test_create_command_displays_version(self):
+    @patch("crewforge.cli.CrewAIScaffolder")
+    @patch("crewforge.cli.PromptTemplates")
+    @patch("crewforge.cli.LLMClient")
+    def test_create_command_displays_version(
+        self, mock_llm, mock_templates, mock_scaffolder
+    ):
         """Test that create command displays version information."""
-        result = self.runner.invoke(create, ["test-project", "Test prompt"])
+        # Mock LLM components
+        mock_llm_instance = Mock()
+        mock_llm.return_value = mock_llm_instance
 
-        assert result.exit_code == 0
-        assert "CrewForge v" in result.output
+        mock_templates_instance = Mock()
+
+        async def mock_extract():
+            return {
+                "project_name": "test-project",
+                "project_description": "Test prompt",
+                "agents": [{"role": "TestAgent"}],
+                "tasks": [{"name": "test_task"}],
+                "dependencies": ["crewai"],
+            }
+
+        mock_templates_instance.extract_project_spec = Mock(return_value=mock_extract())
+        mock_templates.return_value = mock_templates_instance
+
+        # Mock scaffolder
+        mock_scaffolder_instance = Mock()
+        mock_scaffolder_instance.check_crewai_available.return_value = False
+        mock_scaffolder.return_value = mock_scaffolder_instance
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = self.runner.invoke(
+                create, ["test-project", "Test prompt", "--output-dir", temp_dir]
+            )
+
+            assert result.exit_code == 0
+            assert "CrewForge v" in result.output
 
 
 class TestCommandIntegration:

@@ -3,10 +3,14 @@ Test CLI argument validation and edge cases.
 
 Comprehensive tests for command line argument parsing, validation,
 and error handling for the CrewForge CLI tool.
+All tests use temporary directories to avoid creating test projects in the repository.
 """
 
 import os
 import sys
+import tempfile
+from pathlib import Path
+from unittest.mock import patch, Mock
 from click.testing import CliRunner
 import pytest
 
@@ -16,12 +20,76 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from crewforge.cli import main, create
 
 
+# Global fixture to mock all LLM and scaffolder components for all tests in this file
+@pytest.fixture(autouse=True)
+def mock_llm_and_scaffolder():
+    """Auto-use fixture to mock LLM and scaffolder components for all tests."""
+    with (
+        patch("crewforge.cli.LLMClient") as mock_llm,
+        patch("crewforge.cli.PromptTemplates") as mock_templates,
+        patch("crewforge.cli.CrewAIScaffolder") as mock_scaffolder,
+    ):
+
+        # Mock LLM client
+        mock_llm_instance = Mock()
+        mock_llm.return_value = mock_llm_instance
+
+        # Mock prompt templates with async coroutine - create fresh coroutine each call
+        mock_templates_instance = Mock()
+
+        def create_mock_extract(*args, **kwargs):
+            async def mock_extract():
+                return {
+                    "project_name": "test-project",
+                    "project_description": "Test description",
+                    "agents": [{"role": "TestAgent"}],
+                    "tasks": [{"name": "test_task"}],
+                    "dependencies": ["crewai"],
+                }
+
+            return mock_extract()
+
+        mock_templates_instance.extract_project_spec = Mock(
+            side_effect=create_mock_extract
+        )
+        mock_templates.return_value = mock_templates_instance
+
+        # Mock scaffolder
+        mock_scaffolder_instance = Mock()
+        mock_scaffolder_instance.check_crewai_available.return_value = False
+        mock_scaffolder.return_value = mock_scaffolder_instance
+
+        yield {
+            "llm": mock_llm,
+            "templates": mock_templates,
+            "scaffolder": mock_scaffolder,
+        }
+
+
 class TestProjectNameValidation:
     """Test project name validation and sanitization."""
 
     def setup_method(self):
         """Set up test fixtures."""
         self.runner = CliRunner()
+
+    def invoke_with_temp_dir(self, args, **kwargs):
+        """Helper method to invoke CLI commands with a temporary directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Add --output-dir to args if not already present
+            if "--output-dir" not in args and "-o" not in args:
+                # Handle the -- separator correctly - options must come before --
+                if "--" in args:
+                    separator_index = args.index("--")
+                    # Insert --output-dir before the -- separator
+                    args = (
+                        args[:separator_index]
+                        + ["--output-dir", temp_dir]
+                        + args[separator_index:]
+                    )
+                else:
+                    args = args + ["--output-dir", temp_dir]
+            return self.runner.invoke(create, args, **kwargs)
 
     def test_valid_project_names(self):
         """Test that valid project names are accepted."""
@@ -38,7 +106,7 @@ class TestProjectNameValidation:
         ]
 
         for name in valid_names:
-            result = self.runner.invoke(create, [name, "Test prompt"])
+            result = self.invoke_with_temp_dir([name, "Test prompt"])
             assert (
                 result.exit_code == 0
             ), f"Project name '{name}' should be valid but was rejected"
@@ -68,9 +136,9 @@ class TestProjectNameValidation:
         for name, description in invalid_names:
             if name.startswith("-"):
                 # Use -- separator for names starting with dashes
-                result = self.runner.invoke(create, ["--", name, "Test prompt"])
+                result = self.invoke_with_temp_dir(["--", name, "Test prompt"])
             else:
-                result = self.runner.invoke(create, [name, "Test prompt"])
+                result = self.invoke_with_temp_dir([name, "Test prompt"])
             assert (
                 result.exit_code == 1
             ), f"Project name '{name}' ({description}) should be rejected but was accepted"
@@ -88,19 +156,19 @@ class TestProjectNameValidation:
         """Test edge cases for project name validation."""
         # Test very long names (should be accepted if valid characters)
         long_valid_name = "a" * 50  # 50 character name
-        result = self.runner.invoke(create, [long_valid_name, "Test prompt"])
+        result = self.invoke_with_temp_dir([long_valid_name, "Test prompt"])
         assert result.exit_code == 0
 
         # Test single character names
-        result = self.runner.invoke(create, ["a", "Test prompt"])
+        result = self.invoke_with_temp_dir(["a", "Test prompt"])
         assert result.exit_code == 0
 
         # Test names with only special allowed characters
         # Use -- to separate options from arguments for names starting with dashes
-        result = self.runner.invoke(create, ["--", "---", "Test prompt"])
+        result = self.invoke_with_temp_dir(["--", "---", "Test prompt"])
         assert result.exit_code == 1  # Should be invalid (no alphanumeric)
 
-        result = self.runner.invoke(create, ["--", "___", "Test prompt"])
+        result = self.invoke_with_temp_dir(["--", "___", "Test prompt"])
         assert result.exit_code == 1  # Should be invalid (no alphanumeric)
 
 
@@ -110,6 +178,24 @@ class TestPromptArgumentHandling:
     def setup_method(self):
         """Set up test fixtures."""
         self.runner = CliRunner()
+
+    def invoke_with_temp_dir(self, args, **kwargs):
+        """Helper method to invoke CLI commands with a temporary directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Add --output-dir to args if not already present
+            if "--output-dir" not in args and "-o" not in args:
+                # Handle the -- separator correctly - options must come before --
+                if "--" in args:
+                    separator_index = args.index("--")
+                    # Insert --output-dir before the -- separator
+                    args = (
+                        args[:separator_index]
+                        + ["--output-dir", temp_dir]
+                        + args[separator_index:]
+                    )
+                else:
+                    args = args + ["--output-dir", temp_dir]
+            return self.runner.invoke(create, args, **kwargs)
 
     def test_prompt_with_special_characters(self):
         """Test that prompts with special characters are handled correctly."""
@@ -125,7 +211,7 @@ class TestPromptArgumentHandling:
         ]
 
         for prompt in special_prompts:
-            result = self.runner.invoke(create, ["test-project", prompt])
+            result = self.invoke_with_temp_dir(["test-project", prompt])
             assert (
                 result.exit_code == 0
             ), f"Prompt with special chars should be accepted: {prompt}"
@@ -133,7 +219,7 @@ class TestPromptArgumentHandling:
     def test_empty_prompt_handling(self):
         """Test handling of empty or whitespace-only prompts."""
         # Empty prompt without interactive mode should fail
-        result = self.runner.invoke(create, ["test-project"])
+        result = self.invoke_with_temp_dir(["test-project"])
         assert result.exit_code == 1
         assert "Please provide a prompt or use --interactive mode" in result.output
 
@@ -158,7 +244,7 @@ class TestPromptArgumentHandling:
             "Create a comprehensive project that " + "handles many requirements " * 50
         )
 
-        result = self.runner.invoke(create, ["test-project", long_prompt])
+        result = self.invoke_with_temp_dir(["test-project", long_prompt])
         assert result.exit_code == 0
         # Should not crash or truncate unexpectedly
 
@@ -169,6 +255,24 @@ class TestOutputDirectoryValidation:
     def setup_method(self):
         """Set up test fixtures."""
         self.runner = CliRunner()
+
+    def invoke_with_temp_dir(self, args, **kwargs):
+        """Helper method to invoke CLI commands with a temporary directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Add --output-dir to args if not already present
+            if "--output-dir" not in args and "-o" not in args:
+                # Handle the -- separator correctly - options must come before --
+                if "--" in args:
+                    separator_index = args.index("--")
+                    # Insert --output-dir before the -- separator
+                    args = (
+                        args[:separator_index]
+                        + ["--output-dir", temp_dir]
+                        + args[separator_index:]
+                    )
+                else:
+                    args = args + ["--output-dir", temp_dir]
+            return self.runner.invoke(create, args, **kwargs)
 
     def test_valid_output_directories(self):
         """Test that valid output directories are accepted."""
@@ -192,7 +296,7 @@ class TestOutputDirectoryValidation:
 
     def test_output_directory_in_help(self):
         """Test that output directory option is properly documented."""
-        result = self.runner.invoke(create, ["--help"])
+        result = self.invoke_with_temp_dir(["--help"])
         assert result.exit_code == 0
         assert "--output-dir" in result.output or "-o" in result.output
         assert "directory" in result.output.lower()
@@ -204,6 +308,24 @@ class TestInteractiveModeHandling:
     def setup_method(self):
         """Set up test fixtures."""
         self.runner = CliRunner()
+
+    def invoke_with_temp_dir(self, args, **kwargs):
+        """Helper method to invoke CLI commands with a temporary directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Add --output-dir to args if not already present
+            if "--output-dir" not in args and "-o" not in args:
+                # Handle the -- separator correctly - options must come before --
+                if "--" in args:
+                    separator_index = args.index("--")
+                    # Insert --output-dir before the -- separator
+                    args = (
+                        args[:separator_index]
+                        + ["--output-dir", temp_dir]
+                        + args[separator_index:]
+                    )
+                else:
+                    args = args + ["--output-dir", temp_dir]
+            return self.runner.invoke(create, args, **kwargs)
 
     def test_interactive_flag_variants(self):
         """Test both short and long forms of interactive flag."""
@@ -226,8 +348,8 @@ class TestInteractiveModeHandling:
     def test_interactive_with_existing_prompt(self):
         """Test behavior when both interactive flag and prompt are provided."""
         # When both prompt and interactive are provided, prompt should take precedence
-        result = self.runner.invoke(
-            create, ["test-project", "Existing prompt", "--interactive"]
+        result = self.invoke_with_temp_dir(
+            ["test-project", "Existing prompt", "--interactive"]
         )
         assert result.exit_code == 0
         assert "Existing prompt" in result.output
@@ -238,6 +360,26 @@ class TestArgumentCombinations:
     """Test various combinations of CLI arguments."""
 
     def setup_method(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def invoke_with_temp_dir(self, args, **kwargs):
+        """Helper method to invoke CLI commands with a temporary directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Add --output-dir to args if not already present
+            if "--output-dir" not in args and "-o" not in args:
+                # Handle the -- separator correctly - options must come before --
+                if "--" in args:
+                    separator_index = args.index("--")
+                    # Insert --output-dir before the -- separator
+                    args = (
+                        args[:separator_index]
+                        + ["--output-dir", temp_dir]
+                        + args[separator_index:]
+                    )
+                else:
+                    args = args + ["--output-dir", temp_dir]
+            return self.runner.invoke(create, args, **kwargs)
         """Set up test fixtures."""
         self.runner = CliRunner()
 
@@ -261,13 +403,13 @@ class TestArgumentCombinations:
 
     def test_minimal_valid_arguments(self):
         """Test minimal valid argument combination."""
-        result = self.runner.invoke(create, ["minimal", "Simple prompt"])
+        result = self.invoke_with_temp_dir(["minimal", "Simple prompt"])
 
         assert result.exit_code == 0
         assert "minimal" in result.output
         assert "Simple prompt" in result.output
-        # Should use default output directory (current directory)
-        assert "Output directory: ." in result.output
+        # Should use output directory (temp directory from test helper)
+        assert "Output directory: /tmp/tmp" in result.output
 
     def test_argument_order_independence(self):
         """Test that argument order doesn't affect functionality."""
