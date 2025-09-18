@@ -28,7 +28,7 @@
 **Delivers:** Guided prompts for missing or ambiguous project information
 **Components:** Interactive Clarifier
 
-- [ ] Implement ambiguity detection in parsed specifications
+- [✅] Implement ambiguity detection in parsed specifications
 - [ ] Create targeted question generation for missing requirements
 - [ ] Build multi-turn conversation handling with context retention
 - [ ] Add user preference collection for configuration options

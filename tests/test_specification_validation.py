@@ -443,3 +443,324 @@ class TestIssueSeverity:
         """Test that severity levels can be compared."""
         assert IssueSeverity.ERROR > IssueSeverity.WARNING
         assert IssueSeverity.WARNING > IssueSeverity.INFO
+
+
+class TestAmbiguityDetection:
+    """Test cases for ambiguity detection in specifications."""
+
+    @pytest.fixture
+    def validator(self):
+        """Create a SpecificationValidator instance for testing."""
+        return SpecificationValidator()
+
+    @pytest.fixture
+    def base_spec(self) -> Dict[str, Any]:
+        """Create a base specification for ambiguity testing."""
+        return {
+            "project_name": "test-project",
+            "project_description": "A test project",
+            "agents": [],
+            "tasks": [],
+            "dependencies": ["crewai"],
+        }
+
+    def test_detect_vague_agent_roles(self, validator, base_spec):
+        """Test detection of vague agent roles."""
+        spec = base_spec.copy()
+        spec["agents"] = [
+            {
+                "role": "agent",  # Vague role
+                "goal": "Do things",
+                "backstory": "Generic agent that helps",
+                "tools": ["tool1"],
+            },
+            {
+                "role": "assistant",  # Vague role
+                "goal": "Assist with tasks",
+                "backstory": "General assistant",
+                "tools": ["tool2"],
+            },
+            {
+                "role": "Research Analyst",  # Specific role - should not trigger
+                "goal": "Analyze market data",
+                "backstory": "Expert in market analysis",
+                "tools": ["web_search"],
+            },
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Task 1",
+                "expected_output": "Output 1",
+                "agent": "agent",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect ambiguity in vague agent roles
+        ambiguity_warnings = [
+            issue
+            for issue in result.issues
+            if "vague" in issue.message.lower() or "ambiguous" in issue.message.lower()
+        ]
+
+        assert len(ambiguity_warnings) >= 2  # Should detect "agent" and "assistant"
+
+        # Check specific vague roles are flagged
+        vague_role_messages = [issue.message for issue in ambiguity_warnings]
+        assert any("agent" in msg.lower() for msg in vague_role_messages)
+        assert any("assistant" in msg.lower() for msg in vague_role_messages)
+
+    def test_detect_unclear_task_descriptions(self, validator, base_spec):
+        """Test detection of unclear or too-generic task descriptions."""
+        spec = base_spec.copy()
+        spec["agents"] = [
+            {
+                "role": "Worker",
+                "goal": "Work on tasks",
+                "backstory": "A worker",
+                "tools": ["tool1"],
+            }
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Do work",  # Too vague
+                "expected_output": "Work done",  # Too vague
+                "agent": "Worker",
+            },
+            {
+                "description": "Task",  # Too short
+                "expected_output": "Result",  # Too short
+                "agent": "Worker",
+            },
+            {
+                "description": "Research and analyze the market trends in the technology sector for Q4 2023",  # Specific - should not trigger
+                "expected_output": "Detailed market analysis report with key findings and recommendations",
+                "agent": "Worker",
+            },
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect ambiguity in vague task descriptions
+        ambiguity_warnings = [
+            issue
+            for issue in result.issues
+            if (
+                "vague" in issue.message.lower()
+                or "ambiguous" in issue.message.lower()
+                or "unclear" in issue.message.lower()
+                or "generic" in issue.message.lower()
+            )
+        ]
+
+        assert len(ambiguity_warnings) >= 2  # Should detect multiple vague tasks
+
+    def test_detect_vague_project_description(self, validator, base_spec):
+        """Test detection of vague project descriptions."""
+        spec = base_spec.copy()
+        spec["project_description"] = "A project"  # Too vague
+        spec["agents"] = [
+            {
+                "role": "Agent",
+                "goal": "Do something",
+                "backstory": "Agent backstory",
+                "tools": ["tool1"],
+            }
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Task description",
+                "expected_output": "Task output",
+                "agent": "Agent",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect vague project description
+        ambiguity_warnings = [
+            issue
+            for issue in result.issues
+            if "vague" in issue.message.lower() or "ambiguous" in issue.message.lower()
+        ]
+
+        assert len(ambiguity_warnings) >= 1
+        assert any(
+            "project_description" in issue.field_path for issue in ambiguity_warnings
+        )
+
+    def test_detect_mismatched_agent_tools(self, validator, base_spec):
+        """Test detection of tools that don't match agent roles."""
+        spec = base_spec.copy()
+        spec["agents"] = [
+            {
+                "role": "Content Writer",
+                "goal": "Write articles",
+                "backstory": "Professional writer",
+                "tools": [
+                    "web_scraper",
+                    "database_query",
+                ],  # Tools don't match writing role
+            },
+            {
+                "role": "Data Analyst",
+                "goal": "Analyze data",
+                "backstory": "Expert analyst",
+                "tools": ["data_analyzer", "visualization_tool"],  # Good match
+            },
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Write content",
+                "expected_output": "Articles",
+                "agent": "Content Writer",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect tool-role mismatch
+        mismatch_warnings = [
+            issue
+            for issue in result.issues
+            if (
+                "mismatch" in issue.message.lower()
+                or "doesn't match" in issue.message.lower()
+                or "may not match" in issue.message.lower()
+                or "not match" in issue.message.lower()
+            )
+        ]
+
+        assert len(mismatch_warnings) >= 1
+
+    def test_detect_ambiguous_agent_goals(self, validator, base_spec):
+        """Test detection of ambiguous agent goals."""
+        spec = base_spec.copy()
+        spec["agents"] = [
+            {
+                "role": "Helper",
+                "goal": "Help",  # Too vague
+                "backstory": "Helpful agent",
+                "tools": ["tool1"],
+            },
+            {
+                "role": "Analyzer",
+                "goal": "Do analysis",  # Vague
+                "backstory": "Analysis expert",
+                "tools": ["analyzer"],
+            },
+            {
+                "role": "Research Specialist",
+                "goal": "Conduct comprehensive market research to identify emerging trends and opportunities",  # Specific - good
+                "backstory": "Market research expert",
+                "tools": ["research_tool"],
+            },
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Task",
+                "expected_output": "Output",
+                "agent": "Helper",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect vague goals
+        ambiguity_warnings = [
+            issue
+            for issue in result.issues
+            if (
+                "vague" in issue.message.lower() or "ambiguous" in issue.message.lower()
+            )
+            and "goal" in issue.field_path
+        ]
+
+        assert len(ambiguity_warnings) >= 2  # Should detect both vague goals
+
+    def test_no_false_positives_for_specific_content(self, validator, base_spec):
+        """Test that specific, detailed content doesn't trigger ambiguity detection."""
+        spec = base_spec.copy()
+        spec["project_description"] = (
+            "Advanced AI-powered market research system for analyzing technology sector trends and consumer behavior patterns"
+        )
+        spec["agents"] = [
+            {
+                "role": "Senior Market Research Analyst",
+                "goal": "Conduct comprehensive market analysis using advanced statistical methods to identify emerging trends in the technology sector",
+                "backstory": "PhD in Economics with 15 years of experience in market research and data analysis at Fortune 500 companies",
+                "tools": [
+                    "advanced_web_scraper",
+                    "statistical_analyzer",
+                    "trend_predictor",
+                    "report_generator",
+                ],
+            }
+        ]
+        spec["tasks"] = [
+            {
+                "description": "Research and analyze current market trends in the artificial intelligence and machine learning sector, focusing on enterprise adoption rates and key technological innovations",
+                "expected_output": "Comprehensive 50-page market analysis report including statistical charts, trend forecasts, and strategic recommendations for market entry",
+                "agent": "Senior Market Research Analyst",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should not detect any ambiguity warnings for this specific content
+        ambiguity_warnings = [
+            issue
+            for issue in result.issues
+            if (
+                "vague" in issue.message.lower()
+                or "ambiguous" in issue.message.lower()
+                or "unclear" in issue.message.lower()
+                or "generic" in issue.message.lower()
+            )
+        ]
+
+        assert len(ambiguity_warnings) == 0
+
+    def test_detect_multiple_ambiguities_comprehensive(self, validator, base_spec):
+        """Test comprehensive ambiguity detection across multiple specification areas."""
+        spec = base_spec.copy()
+        spec["project_description"] = "Some project"  # Vague
+        spec["agents"] = [
+            {
+                "role": "agent",  # Vague role
+                "goal": "help",  # Vague goal
+                "backstory": "helpful",  # Vague backstory
+                "tools": ["tool"],  # Generic tool name
+            }
+        ]
+        spec["tasks"] = [
+            {
+                "description": "task",  # Vague description
+                "expected_output": "output",  # Vague output
+                "agent": "agent",
+            }
+        ]
+
+        result = validator.validate(spec)
+
+        # Should detect multiple types of ambiguity
+        ambiguity_issues = [
+            issue
+            for issue in result.issues
+            if (
+                "vague" in issue.message.lower()
+                or "ambiguous" in issue.message.lower()
+                or "unclear" in issue.message.lower()
+                or "generic" in issue.message.lower()
+            )
+        ]
+
+        # Should detect ambiguities in multiple areas
+        assert len(ambiguity_issues) >= 5  # Multiple ambiguous elements
+
+        # Check that different field paths are covered
+        field_paths = {issue.field_path.split(".")[0] for issue in ambiguity_issues}
+        assert "project_description" in field_paths or any(
+            "agents" in path for path in field_paths
+        )

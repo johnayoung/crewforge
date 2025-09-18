@@ -125,6 +125,7 @@ class SpecificationValidator:
     - Required field validation
     - Data type validation
     - Business logic validation (agent-task relationships, etc.)
+    - Ambiguity detection for better user guidance
     - Completeness scoring
     - Warning generation for best practices
     """
@@ -150,6 +151,114 @@ class SpecificationValidator:
 
     # Valid project name pattern (kebab-case)
     PROJECT_NAME_PATTERN = re.compile(r"^[a-z]+(-[a-z0-9]+)*$")
+
+    # Ambiguity detection patterns and rules
+    VAGUE_ROLE_PATTERNS = {
+        "agent",
+        "assistant",
+        "helper",
+        "worker",
+        "bot",
+        "ai",
+        "system",
+        "generic",
+        "general",
+        "basic",
+        "simple",
+        "default",
+        "main",
+    }
+
+    VAGUE_GOAL_KEYWORDS = {
+        "help",
+        "assist",
+        "do",
+        "work",
+        "handle",
+        "manage",
+        "process",
+        "deal",
+        "take care",
+        "support",
+        "execute",
+        "perform",
+        "run",
+    }
+
+    VAGUE_TASK_KEYWORDS = {
+        "task",
+        "work",
+        "job",
+        "activity",
+        "action",
+        "operation",
+        "step",
+        "process",
+        "handle",
+        "deal",
+        "manage",
+        "execute",
+        "perform",
+        "run",
+    }
+
+    VAGUE_OUTPUT_KEYWORDS = {
+        "output",
+        "result",
+        "outcome",
+        "response",
+        "answer",
+        "data",
+        "information",
+        "content",
+        "report",
+        "summary",
+        "analysis",
+    }
+
+    # Tool-role mapping for mismatch detection
+    ROLE_TOOL_MAPPINGS = {
+        "writer": [
+            "document_writer",
+            "text_editor",
+            "grammar_checker",
+            "content_generator",
+        ],
+        "content": [
+            "document_writer",
+            "text_editor",
+            "grammar_checker",
+            "content_generator",
+        ],
+        "research": ["web_search", "web_scraper", "research_tool", "data_collector"],
+        "analyst": [
+            "data_analyzer",
+            "statistical_tool",
+            "visualization_tool",
+            "report_generator",
+        ],
+        "data": [
+            "data_analyzer",
+            "database_query",
+            "statistical_tool",
+            "visualization_tool",
+        ],
+        "social": ["social_media_tool", "engagement_tracker", "content_scheduler"],
+        "marketing": [
+            "social_media_tool",
+            "analytics_tool",
+            "campaign_manager",
+            "seo_tool",
+        ],
+        "design": [
+            "image_editor",
+            "graphic_tool",
+            "design_software",
+            "visualization_tool",
+        ],
+        "developer": ["code_editor", "debugger", "compiler", "version_control"],
+        "programmer": ["code_editor", "debugger", "compiler", "version_control"],
+    }
 
     def __init__(self):
         """Initialize the specification validator."""
@@ -185,6 +294,9 @@ class SpecificationValidator:
 
         # Cross-component validation
         self._validate_agent_task_relationships(spec_dict)
+
+        # Ambiguity detection
+        self._detect_ambiguities(spec_dict)
 
         # Calculate completeness score
         completeness_score = self._calculate_completeness_score(spec_dict)
@@ -349,6 +461,241 @@ class SpecificationValidator:
                         self._add_error(
                             f"Tool name cannot be empty", f"{agent_path}.tools[{j}]"
                         )
+
+    def _detect_ambiguities(self, spec: Dict[str, Any]) -> None:
+        """Detect various types of ambiguity in the specification."""
+        self._detect_vague_project_description(spec)
+        self._detect_vague_agent_roles(spec.get("agents", []))
+        self._detect_vague_agent_goals(spec.get("agents", []))
+        self._detect_vague_agent_backstories(spec.get("agents", []))
+        self._detect_tool_role_mismatches(spec.get("agents", []))
+        self._detect_vague_task_descriptions(spec.get("tasks", []))
+        self._detect_vague_task_outputs(spec.get("tasks", []))
+
+    def _detect_vague_project_description(self, spec: Dict[str, Any]) -> None:
+        """Detect vague project descriptions."""
+        description = spec.get("project_description", "")
+        if not isinstance(description, str):
+            return
+
+        description_lower = description.lower().strip()
+
+        # Check for very short descriptions
+        if len(description_lower) < 15:
+            self._add_warning(
+                "Project description is very short and may be too vague",
+                "project_description",
+            )
+            return
+
+        # Check for vague patterns
+        vague_patterns = [
+            "a project",
+            "some project",
+            "project for",
+            "simple project",
+            "basic project",
+            "general project",
+            "new project",
+            "project to",
+        ]
+
+        if any(pattern in description_lower for pattern in vague_patterns):
+            self._add_warning(
+                "Project description appears vague - consider adding more specific details about purpose and scope",
+                "project_description",
+            )
+
+    def _detect_vague_agent_roles(self, agents: List[Dict[str, Any]]) -> None:
+        """Detect vague agent roles."""
+        if not isinstance(agents, list):
+            return
+
+        for i, agent in enumerate(agents):
+            if not isinstance(agent, dict):
+                continue
+
+            role = agent.get("role", "")
+            if not isinstance(role, str):
+                continue
+
+            role_lower = role.lower().strip()
+
+            # Check for vague role names
+            if role_lower in self.VAGUE_ROLE_PATTERNS:
+                self._add_warning(
+                    f"Agent role '{role}' is vague - consider a more specific role like 'Research Analyst' or 'Content Writer'",
+                    f"agents[{i}].role",
+                )
+
+    def _detect_vague_agent_goals(self, agents: List[Dict[str, Any]]) -> None:
+        """Detect vague agent goals."""
+        if not isinstance(agents, list):
+            return
+
+        for i, agent in enumerate(agents):
+            if not isinstance(agent, dict):
+                continue
+
+            goal = agent.get("goal", "")
+            if not isinstance(goal, str):
+                continue
+
+            goal_lower = goal.lower().strip()
+
+            # Check for very short goals
+            if len(goal_lower) < 10:
+                self._add_warning(
+                    f"Agent goal is very short and may be too vague",
+                    f"agents[{i}].goal",
+                )
+                continue
+
+            # Check for vague goal patterns
+            if any(keyword in goal_lower for keyword in self.VAGUE_GOAL_KEYWORDS):
+                # Additional check - if it's just a single vague keyword with minimal context
+                words = goal_lower.split()
+                if len(words) <= 3 and any(
+                    keyword in words for keyword in self.VAGUE_GOAL_KEYWORDS
+                ):
+                    self._add_warning(
+                        f"Agent goal appears vague - consider adding specific details about what this agent should accomplish",
+                        f"agents[{i}].goal",
+                    )
+
+    def _detect_vague_agent_backstories(self, agents: List[Dict[str, Any]]) -> None:
+        """Detect vague agent backstories."""
+        if not isinstance(agents, list):
+            return
+
+        for i, agent in enumerate(agents):
+            if not isinstance(agent, dict):
+                continue
+
+            backstory = agent.get("backstory", "")
+            if not isinstance(backstory, str):
+                continue
+
+            backstory_lower = backstory.lower().strip()
+
+            # Check for very short backstories
+            if len(backstory_lower) < 15:
+                self._add_warning(
+                    f"Agent backstory is very short and may lack sufficient detail",
+                    f"agents[{i}].backstory",
+                )
+
+    def _detect_tool_role_mismatches(self, agents: List[Dict[str, Any]]) -> None:
+        """Detect potential mismatches between agent roles and their assigned tools."""
+        if not isinstance(agents, list):
+            return
+
+        for i, agent in enumerate(agents):
+            if not isinstance(agent, dict):
+                continue
+
+            role = agent.get("role", "")
+            tools = agent.get("tools", [])
+
+            if not isinstance(role, str) or not isinstance(tools, list):
+                continue
+
+            role_lower = role.lower()
+
+            # Find potential role keywords
+            role_keywords = []
+            for keyword in self.ROLE_TOOL_MAPPINGS.keys():
+                if keyword in role_lower:
+                    role_keywords.append(keyword)
+
+            if not role_keywords:
+                continue  # No recognizable role patterns
+
+            # Check if any tools match the role
+            expected_tools = set()
+            for keyword in role_keywords:
+                expected_tools.update(self.ROLE_TOOL_MAPPINGS[keyword])
+
+            tool_names = [tool.lower() for tool in tools if isinstance(tool, str)]
+
+            # Check for any overlap
+            has_matching_tools = False
+            for tool in tool_names:
+                if any(expected_tool in tool for expected_tool in expected_tools):
+                    has_matching_tools = True
+                    break
+
+            if not has_matching_tools and len(tools) > 0:
+                self._add_warning(
+                    f"Agent role '{role}' may not match assigned tools - consider tools more aligned with the role",
+                    f"agents[{i}].tools",
+                )
+
+    def _detect_vague_task_descriptions(self, tasks: List[Dict[str, Any]]) -> None:
+        """Detect vague task descriptions."""
+        if not isinstance(tasks, list):
+            return
+
+        for i, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                continue
+
+            description = task.get("description", "")
+            if not isinstance(description, str):
+                continue
+
+            description_lower = description.lower().strip()
+
+            # Check for very short descriptions
+            if len(description_lower) < 10:
+                self._add_warning(
+                    f"Task description is very short and may be too vague",
+                    f"tasks[{i}].description",
+                )
+                continue
+
+            # Check for vague task patterns
+            words = description_lower.split()
+            if len(words) <= 3 and any(
+                keyword in words for keyword in self.VAGUE_TASK_KEYWORDS
+            ):
+                self._add_warning(
+                    f"Task description appears vague - consider adding specific details about what should be accomplished",
+                    f"tasks[{i}].description",
+                )
+
+    def _detect_vague_task_outputs(self, tasks: List[Dict[str, Any]]) -> None:
+        """Detect vague task expected outputs."""
+        if not isinstance(tasks, list):
+            return
+
+        for i, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                continue
+
+            expected_output = task.get("expected_output", "")
+            if not isinstance(expected_output, str):
+                continue
+
+            output_lower = expected_output.lower().strip()
+
+            # Check for very short outputs
+            if len(output_lower) < 8:
+                self._add_warning(
+                    f"Task expected output is very short and may be too vague",
+                    f"tasks[{i}].expected_output",
+                )
+                continue
+
+            # Check for vague output patterns
+            words = output_lower.split()
+            if len(words) <= 2 and any(
+                keyword in words for keyword in self.VAGUE_OUTPUT_KEYWORDS
+            ):
+                self._add_warning(
+                    f"Task expected output appears vague - consider describing the specific format and content expected",
+                    f"tasks[{i}].expected_output",
+                )
 
     def _validate_tasks(self, tasks: Any, agents: List[Dict[str, Any]]) -> None:
         """Validate tasks list and individual task specifications."""
