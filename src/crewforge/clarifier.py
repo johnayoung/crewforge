@@ -703,6 +703,146 @@ Please specify your preferences: """,
 
         return "; ".join(formatted_items)
 
+    async def apply_clarification_responses(
+        self,
+        context: ConversationContext,
+        questions: List[Question],
+        responses: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Apply user clarification responses back to the project specification.
+
+        This is the core integration method that creates the feedback loop between
+        the clarifier and the prompt parser.
+
+        Args:
+            context: Current conversation context
+            questions: Original questions that were asked
+            responses: User responses with question_id, field, and response
+
+        Returns:
+            Enhanced project specification incorporating user responses
+
+        Raises:
+            ClarificationError: If applying responses fails
+        """
+        if not responses:
+            return context.current_specification
+
+        try:
+            # Format responses for enhancement context
+            enhancement_context = self._format_responses_for_enhancement(responses)
+
+            # Use the LLM to enhance the specification with user responses
+            enhanced_spec = await self._enhance_spec_with_responses(
+                context.current_specification, enhancement_context, responses
+            )
+
+            # Update conversation context
+            context.current_specification = enhanced_spec
+            context.conversation_state = ConversationState.PROCESSING_RESPONSES
+            context.last_activity = datetime.now()
+
+            # Add responses to conversation history
+            for response in responses:
+                self.add_to_history(
+                    "user", f"Field {response['field']}: {response['response']}"
+                )
+
+            return enhanced_spec
+
+        except Exception as e:
+            raise ClarificationError(
+                f"Failed to apply clarification responses: {str(e)}", e
+            )
+
+    def _format_responses_for_enhancement(self, responses: List[Dict[str, str]]) -> str:
+        """
+        Format user responses into enhancement context for the LLM.
+
+        Args:
+            responses: List of user responses
+
+        Returns:
+            Formatted enhancement context string
+        """
+        if not responses:
+            return ""
+
+        context_lines = ["User provided the following clarifications:"]
+        for response in responses:
+            context_lines.append(f"- {response['field']}: {response['response']}")
+
+        context_lines.append(
+            "\nPlease update the specification to incorporate these clarifications."
+        )
+        return "\n".join(context_lines)
+
+    async def _enhance_spec_with_responses(
+        self,
+        current_spec: Dict[str, Any],
+        enhancement_context: str,
+        responses: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Use LLM to enhance specification with user responses.
+
+        Args:
+            current_spec: Current project specification
+            enhancement_context: Formatted enhancement context
+            responses: Original user responses for field mapping
+
+        Returns:
+            Enhanced specification
+
+        Raises:
+            ClarificationError: If enhancement fails
+        """
+        try:
+            # Build enhancement prompt
+            enhancement_prompt = f"""Given this CrewAI project specification:
+
+{json.dumps(current_spec, indent=2)}
+
+{enhancement_context}
+
+Please update the specification by applying the user's clarifications to the appropriate fields.
+Maintain the exact same JSON structure and only modify the specific fields mentioned in the responses.
+Ensure all required fields remain populated and the specification remains valid.
+
+Return the complete updated specification as JSON."""
+
+            messages = [{"role": "user", "content": enhancement_prompt}]
+
+            # Import here to avoid circular imports
+            from crewforge.prompt_templates import PromptTemplates
+
+            # Get the project spec schema for structured response
+            schema = PromptTemplates.get_project_spec_schema()
+
+            # Get enhanced spec from LLM
+            enhanced_spec = await self.llm_client.complete_structured(
+                prompt=messages,
+                schema=schema,
+                temperature=0.3,  # Lower temperature for accurate field updates
+            )
+
+            # Validate that we got a valid dictionary response
+            if not isinstance(enhanced_spec, dict):
+                raise ClarificationError(
+                    f"Invalid enhanced specification: expected dict, got {type(enhanced_spec)}"
+                )
+
+            return enhanced_spec
+
+        except ClarificationError:
+            # Re-raise ClarificationErrors as-is
+            raise
+        except Exception as e:
+            raise ClarificationError(
+                f"Failed to enhance specification with LLM: {str(e)}", e
+            )
+
     async def process_answers(
         self, context: ConversationContext, answers: List[UserResponse]
     ) -> ConversationContext:
