@@ -93,9 +93,7 @@ class TestCreateCommand:
         result = self.runner.invoke(create, ["test-project"])
 
         assert result.exit_code == 1  # Should exit with error code
-        assert (
-            "Error: Please provide a prompt or use --interactive mode" in result.output
-        )
+        assert "Please provide a prompt or use --interactive mode" in result.output
 
     def test_create_command_interactive_mode(self):
         """Test create command with interactive flag."""
