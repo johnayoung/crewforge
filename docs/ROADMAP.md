@@ -29,7 +29,7 @@
 **Components:** Interactive Clarifier
 
 - [✅] Implement ambiguity detection in parsed specifications
-- [ ] Create targeted question generation for missing requirements
+- [✅] Create targeted question generation for missing requirements
 - [ ] Build multi-turn conversation handling with context retention
 - [ ] Add user preference collection for configuration options
 - [ ] Integrate clarifier feedback loop with liteLLM-powered prompt parser
