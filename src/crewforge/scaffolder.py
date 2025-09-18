@@ -11,6 +11,7 @@ import shutil
 import re
 import os
 import getpass
+import datetime
 from pathlib import Path
 from typing import Dict, Optional, Any, Tuple, List
 import logging
@@ -737,3 +738,383 @@ class CrewAIScaffolder:
         result["api_key"] = api_key_input["api_key"]
         result["success"] = True
         return result
+
+    def create_crew_with_advanced_directory_management(
+        self,
+        project_name: str,
+        target_directory: Path,
+        min_version: Optional[str] = None,
+        handle_existing: str = "backup",  # "backup", "overwrite", "error"
+    ) -> Dict[str, Any]:
+        """
+        Execute 'crewai create crew <name>' command with advanced directory management.
+
+        Args:
+            project_name: Name of the crew project to create
+            target_directory: Directory where the project should be created
+            min_version: Optional minimum CrewAI version requirement
+            handle_existing: How to handle existing project directories
+
+        Returns:
+            Dictionary containing execution results and project information
+
+        Raises:
+            CrewAIError: If CrewAI CLI execution fails or is not available
+            ValueError: If project_name or target_directory are invalid
+        """
+        # Validate inputs
+        if not project_name or not project_name.strip():
+            raise ValueError("project_name cannot be empty")
+
+        if not isinstance(target_directory, Path):
+            target_directory = Path(target_directory)
+
+        # Validate CrewAI CLI dependency with version checking
+        validation_result = self.validate_crewai_dependency(min_version=min_version)
+        if not validation_result["valid"]:
+            raise CrewAIError(validation_result["error"])
+
+        self.logger.info(
+            f"Using CrewAI CLI version {validation_result['installed_version']}"
+        )
+
+        # Ensure target directory exists with proper validation
+        dir_result = self.ensure_project_directory(target_directory)
+        if not dir_result["success"]:
+            raise CrewAIError(f"Failed to create target directory: {dir_result['error']}")
+
+        # Generate safe project name
+        safe_project_name = self.get_safe_project_name(project_name)
+        project_path = target_directory / safe_project_name
+
+        # Handle existing project directory
+        if project_path.exists():
+            if handle_existing == "error":
+                raise CrewAIError(f"Project directory {project_path} already exists")
+            elif handle_existing == "backup":
+                self.logger.warning(f"Project directory {project_path} already exists")
+                backup_result = self.create_backup_directory(project_path)
+                if backup_result["success"]:
+                    self.logger.info(f"Created backup at {backup_result['backup_path']}")
+                # Clean up existing directory
+                cleanup_result = self.safe_cleanup_directory(project_path)
+                if not cleanup_result["success"]:
+                    raise CrewAIError(
+                        f"Failed to clean up existing directory: {cleanup_result['error']}"
+                    )
+            elif handle_existing == "overwrite":
+                cleanup_result = self.safe_cleanup_directory(project_path)
+                if not cleanup_result["success"]:
+                    raise CrewAIError(
+                        f"Failed to clean up existing directory: {cleanup_result['error']}"
+                    )
+
+        # Execute CrewAI create command
+        try:
+            self.logger.info(
+                f"Creating CrewAI project '{safe_project_name}' in {target_directory}"
+            )
+
+            result = subprocess.run(
+                ["crewai", "create", "crew", safe_project_name],
+                cwd=target_directory,
+                capture_output=True,
+                text=True,
+                timeout=60,  # 60 second timeout for project creation
+            )
+
+            if result.returncode != 0:
+                error_message = (
+                    result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                )
+                self.logger.error(f"CrewAI CLI failed: {error_message}")
+                raise CrewAIError(f"CrewAI project creation failed: {error_message}")
+
+            # Verify the project directory was created
+            if not project_path.exists():
+                raise CrewAIError(
+                    f"Project directory was not created at {project_path}"
+                )
+
+            self.logger.info(f"Successfully created CrewAI project at {project_path}")
+
+            return {
+                "success": True,
+                "project_path": project_path,
+                "project_name": safe_project_name,
+                "original_name": project_name,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+            }
+
+        except subprocess.TimeoutExpired:
+            raise CrewAIError("CrewAI project creation timed out after 60 seconds")
+        except subprocess.SubprocessError as e:
+            raise CrewAIError(f"Subprocess error during CrewAI execution: {str(e)}")
+        except Exception as e:
+            # Cleanup on failure
+            if project_path.exists():
+                cleanup_result = self.safe_cleanup_directory(project_path)
+                if not cleanup_result["success"]:
+                    self.logger.error(f"Failed to cleanup after error: {cleanup_result['error']}")
+            raise CrewAIError(f"Unexpected error during CrewAI execution: {str(e)}")
+
+    def ensure_project_directory(self, project_path: Path) -> Dict[str, Any]:
+        """
+        Ensure project directory exists with proper validation and error handling.
+
+        Args:
+            project_path: Path to the project directory to create
+
+        Returns:
+            Dictionary containing creation results and metadata
+        """
+        result = {
+            "success": False,
+            "created": False,
+            "path": project_path,
+            "error": None,
+        }
+
+        try:
+            # Validate project path first
+            validation = self.validate_project_path(project_path)
+            if not validation["valid"]:
+                result["error"] = validation["error"]
+                return result
+
+            # Check if path exists and is not a directory
+            if project_path.exists() and not project_path.is_dir():
+                result["error"] = f"Path {project_path} exists but is not a directory"
+                return result
+
+            # Create directory if it doesn't exist
+            if not project_path.exists():
+                project_path.mkdir(parents=True, exist_ok=True)
+                result["created"] = True
+                self.logger.info(f"Created project directory: {project_path}")
+            else:
+                result["created"] = False
+                self.logger.info(f"Using existing project directory: {project_path}")
+
+            result["success"] = True
+            return result
+
+        except PermissionError as e:
+            result["error"] = (
+                f"Permission denied creating directory {project_path}: {str(e)}"
+            )
+            self.logger.error(result["error"])
+            return result
+        except OSError as e:
+            result["error"] = f"OS error creating directory {project_path}: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+        except Exception as e:
+            result["error"] = (
+                f"Unexpected error creating directory {project_path}: {str(e)}"
+            )
+            self.logger.error(result["error"])
+            return result
+
+    def validate_project_path(self, project_path: Path) -> Dict[str, Any]:
+        """
+        Validate project path for safety and filesystem compatibility.
+
+        Args:
+            project_path: Path to validate
+
+        Returns:
+            Dictionary containing validation results
+        """
+        result = {"valid": True, "error": None}
+
+        try:
+            # Check for reserved names on Windows (cross-platform safety)
+            reserved_names = {
+                "con",
+                "prn",
+                "aux",
+                "nul",
+                "com1",
+                "com2",
+                "com3",
+                "com4",
+                "com5",
+                "com6",
+                "com7",
+                "com8",
+                "com9",
+                "lpt1",
+                "lpt2",
+                "lpt3",
+                "lpt4",
+                "lpt5",
+                "lpt6",
+                "lpt7",
+                "lpt8",
+                "lpt9",
+            }
+
+            if project_path.name.lower() in reserved_names:
+                result["valid"] = False
+                result["error"] = (
+                    f"Project name '{project_path.name}' is a reserved name"
+                )
+                return result
+
+            # Check for invalid characters
+            invalid_chars = set('<>:"|?*')
+            if any(char in str(project_path.name) for char in invalid_chars):
+                result["valid"] = False
+                result["error"] = (
+                    f"Project name contains invalid characters: {invalid_chars & set(project_path.name)}"
+                )
+                return result
+
+            # Check path length (filesystem limits)
+            if len(str(project_path)) > 260:  # Windows MAX_PATH limitation
+                result["valid"] = False
+                result["error"] = (
+                    f"Project path too long ({len(str(project_path))} characters, max 260)"
+                )
+                return result
+
+            # Check for empty or whitespace-only name
+            if not project_path.name.strip():
+                result["valid"] = False
+                result["error"] = "Project name cannot be empty or whitespace only"
+                return result
+
+            return result
+
+        except Exception as e:
+            result["valid"] = False
+            result["error"] = f"Error validating project path: {str(e)}"
+            return result
+
+    def safe_cleanup_directory(self, project_path: Path) -> Dict[str, Any]:
+        """
+        Safely cleanup project directory on failure.
+
+        Args:
+            project_path: Path to the directory to cleanup
+
+        Returns:
+            Dictionary containing cleanup results
+        """
+        result = {"success": False, "error": None}
+
+        try:
+            if not project_path.exists():
+                result["success"] = True
+                return result
+
+            if not project_path.is_dir():
+                project_path.unlink()
+                self.logger.info(f"Removed file: {project_path}")
+            else:
+                shutil.rmtree(project_path)
+                self.logger.info(f"Cleaned up directory: {project_path}")
+
+            result["success"] = True
+            return result
+
+        except PermissionError as e:
+            result["error"] = f"Permission denied cleaning up {project_path}: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+        except OSError as e:
+            result["error"] = f"OS error cleaning up {project_path}: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+        except Exception as e:
+            result["error"] = f"Unexpected error cleaning up {project_path}: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+
+    def create_backup_directory(self, original_path: Path) -> Dict[str, Any]:
+        """
+        Create backup of existing directory before overwriting.
+
+        Args:
+            original_path: Path to the original directory to backup
+
+        Returns:
+            Dictionary containing backup results and backup path
+        """
+        result = {"success": False, "backup_path": None, "error": None}
+
+        try:
+            if not original_path.exists():
+                result["error"] = f"Original directory {original_path} does not exist"
+                return result
+
+            # Generate backup name with timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = (
+                original_path.parent / f"{original_path.name}.backup.{timestamp}"
+            )
+
+            # Ensure backup path doesn't exist
+            counter = 1
+            original_backup_path = backup_path
+            while backup_path.exists():
+                backup_path = Path(f"{original_backup_path}_{counter}")
+                counter += 1
+
+            # Copy directory
+            shutil.copytree(original_path, backup_path)
+            result["backup_path"] = backup_path
+            result["success"] = True
+
+            self.logger.info(f"Created backup: {original_path} -> {backup_path}")
+            return result
+
+        except PermissionError as e:
+            result["error"] = f"Permission denied creating backup: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+        except OSError as e:
+            result["error"] = f"OS error creating backup: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+        except Exception as e:
+            result["error"] = f"Unexpected error creating backup: {str(e)}"
+            self.logger.error(result["error"])
+            return result
+
+    def get_safe_project_name(self, user_input: str) -> str:
+        """
+        Generate a safe, filesystem-compatible project name from user input.
+
+        Args:
+            user_input: Raw user input for project name
+
+        Returns:
+            Safe project name suitable for filesystem use
+        """
+        if not user_input or not user_input.strip():
+            return "untitled_project"
+
+        # Convert to lowercase and replace spaces and dashes with underscores
+        safe_name = user_input.lower().strip()
+        safe_name = re.sub(r"[\s\-]+", "_", safe_name)
+
+        # Remove invalid characters, keeping only alphanumeric and underscores
+        safe_name = re.sub(r"[^a-z0-9_]", "", safe_name)
+
+        # Ensure it doesn't start with a number
+        if safe_name and safe_name[0].isdigit():
+            # Move the numbers to the end
+            match = re.match(r"^(\d+)(.*)$", safe_name)
+            if match:
+                numbers, rest = match.groups()
+                safe_name = f"project_{numbers}" if not rest else f"{rest}_{numbers}"
+            else:
+                safe_name = f"project_{safe_name}"  # Ensure minimum length
+        if not safe_name:
+            return "untitled_project"
+
+        return safe_name

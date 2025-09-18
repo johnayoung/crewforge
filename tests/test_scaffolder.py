@@ -811,3 +811,197 @@ class TestLLMProviderConfiguration:
                 assert result["provider"] == "openai"
                 assert result["api_key"] == "sk-test123456789"
                 assert result["error"] is None
+
+
+class TestDirectoryManagement:
+    """Test suite for directory management and file system operations."""
+
+    def test_ensure_project_directory_creation(self):
+        """Test creating project directory with proper permissions."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "test_project"
+
+            # Test directory creation
+            result = scaffolder.ensure_project_directory(project_path)
+
+            assert result["success"] is True
+            assert project_path.exists()
+            assert project_path.is_dir()
+            assert result["created"] is True
+            assert result["path"] == project_path
+
+    def test_ensure_project_directory_exists(self):
+        """Test handling existing project directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "existing_project"
+            project_path.mkdir()
+
+            # Test with existing directory
+            result = scaffolder.ensure_project_directory(project_path)
+
+            assert result["success"] is True
+            assert project_path.exists()
+            assert result["created"] is False
+            assert result["path"] == project_path
+
+    def test_ensure_project_directory_file_conflict(self):
+        """Test handling file conflict when creating directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "conflicting_file"
+
+            # Create a file where directory should be
+            project_path.touch()
+
+            # Test directory creation should fail
+            result = scaffolder.ensure_project_directory(project_path)
+
+            assert result["success"] is False
+            assert "exists but is not a directory" in result["error"]
+
+    @patch("pathlib.Path.mkdir")
+    def test_ensure_project_directory_permission_error(self, mock_mkdir):
+        """Test handling permission errors during directory creation."""
+        mock_mkdir.side_effect = PermissionError("Permission denied")
+
+        scaffolder = CrewAIScaffolder()
+        project_path = Path("/tmp/test_project")
+
+        result = scaffolder.ensure_project_directory(project_path)
+
+        assert result["success"] is False
+        assert "Permission denied" in result["error"]
+
+    def test_validate_project_path_valid(self):
+        """Test validation of valid project paths."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "valid_project"
+
+            result = scaffolder.validate_project_path(project_path)
+
+            assert result["valid"] is True
+            assert result["error"] is None
+
+    def test_validate_project_path_reserved_name(self):
+        """Test validation rejects reserved directory names."""
+        scaffolder = CrewAIScaffolder()
+
+        reserved_names = ["con", "prn", "aux", "nul", "com1", "lpt1"]
+        for name in reserved_names:
+            project_path = Path("/tmp") / name
+            result = scaffolder.validate_project_path(project_path)
+
+            assert result["valid"] is False
+            assert "reserved name" in result["error"].lower()
+
+    def test_validate_project_path_invalid_characters(self):
+        """Test validation rejects paths with invalid characters."""
+        scaffolder = CrewAIScaffolder()
+
+        invalid_chars = ["<", ">", ":", '"', "|", "?", "*"]
+        for char in invalid_chars:
+            project_path = Path("/tmp") / f"project{char}name"
+            result = scaffolder.validate_project_path(project_path)
+
+            assert result["valid"] is False
+            assert "invalid characters" in result["error"].lower()
+
+    def test_validate_project_path_too_long(self):
+        """Test validation rejects paths that are too long."""
+        scaffolder = CrewAIScaffolder()
+
+        # Create a very long path
+        long_name = "a" * 256
+        project_path = Path("/tmp") / long_name
+
+        result = scaffolder.validate_project_path(project_path)
+
+        assert result["valid"] is False
+        assert "too long" in result["error"].lower()
+
+    def test_safe_cleanup_directory(self):
+        """Test safe cleanup of project directory on failure."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "cleanup_test"
+            project_path.mkdir()
+
+            # Create some files in the directory
+            (project_path / "test_file.txt").write_text("test content")
+            (project_path / "subdir").mkdir()
+            (project_path / "subdir" / "nested_file.txt").write_text("nested content")
+
+            # Test cleanup
+            result = scaffolder.safe_cleanup_directory(project_path)
+
+            assert result["success"] is True
+            assert not project_path.exists()
+
+    def test_safe_cleanup_directory_not_exists(self):
+        """Test safe cleanup when directory doesn't exist."""
+        scaffolder = CrewAIScaffolder()
+        project_path = Path("/tmp/nonexistent_directory")
+
+        result = scaffolder.safe_cleanup_directory(project_path)
+
+        assert result["success"] is True  # Should not fail for non-existent directory
+
+    def test_safe_cleanup_directory_permission_error(self):
+        """Test safe cleanup handles permission errors gracefully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            project_path = Path(temp_dir) / "permission_test"
+            project_path.mkdir()  # Create the directory so it exists
+
+            # Use a more specific patch to avoid affecting tempfile cleanup
+            with patch.object(
+                scaffolder,
+                "safe_cleanup_directory",
+                wraps=scaffolder.safe_cleanup_directory,
+            ) as mock_method:
+                with patch(
+                    "shutil.rmtree", side_effect=PermissionError("Permission denied")
+                ):
+                    result = scaffolder.safe_cleanup_directory(project_path)
+
+                    assert result["success"] is False
+                    assert "Permission denied" in result["error"]
+
+    def test_create_backup_directory(self):
+        """Test creating backup of existing directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            original_path = Path(temp_dir) / "original_project"
+            original_path.mkdir()
+
+            # Create content in original directory
+            (original_path / "config.yaml").write_text("original: config")
+
+            # Create backup
+            result = scaffolder.create_backup_directory(original_path)
+
+            assert result["success"] is True
+            assert result["backup_path"].exists()
+            assert result["backup_path"].name.startswith("original_project.backup.")
+            assert (result["backup_path"] / "config.yaml").exists()
+
+    def test_get_safe_project_name(self):
+        """Test generating safe project names from user input."""
+        scaffolder = CrewAIScaffolder()
+
+        test_cases = [
+            ("My Cool Project", "my_cool_project"),
+            ("project-with-dashes", "project_with_dashes"),
+            ("Project123", "project123"),
+            ("project with spaces", "project_with_spaces"),
+            ("Project@#$%", "project"),
+            ("", "untitled_project"),
+            ("123project", "project_123"),
+        ]
+
+        for input_name, expected in test_cases:
+            result = scaffolder.get_safe_project_name(input_name)
+            assert result == expected
