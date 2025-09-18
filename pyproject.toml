@@ -19,6 +19,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
 ]
 
 [project.scripts]
@@ -33,6 +34,7 @@ dev-dependencies = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.21.0",
+    "mypy>=1.0.0",
 ]
 
 [tool.pytest.ini_options]
