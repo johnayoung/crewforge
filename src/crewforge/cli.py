@@ -92,10 +92,23 @@ def create(project_name, prompt, interactive, output_dir):
     )
 
     # Validate project name
-    if (
-        not project_name
-        or not project_name.replace("-", "").replace("_", "").replace(".", "").isalnum()
-    ):
+    # Check for empty or whitespace-only names
+    if not project_name or not project_name.strip():
+        status.error("Project name cannot be empty")
+        raise click.Abort()
+
+    # Check that name contains at least one alphanumeric character
+    alphanumeric_chars = project_name.replace("-", "").replace("_", "").replace(".", "")
+    if not alphanumeric_chars or not alphanumeric_chars.isalnum():
+        status.error(
+            "Project name must contain at least one alphanumeric character (letters or numbers)"
+        )
+        raise click.Abort()
+
+    # Check for invalid characters (only allow alphanumeric, hyphens, underscores, dots)
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9._-]+$", project_name):
         status.error(
             "Project name must be a valid directory name (alphanumeric, hyphens, underscores, dots only)"
         )
@@ -108,6 +121,7 @@ def create(project_name, prompt, interactive, output_dir):
             prompt = click.prompt(
                 "Describe the CrewAI project you want to create",
                 type=str,
+                default="",  # Allow empty input
                 show_default=False,
             )
             if not prompt.strip():
