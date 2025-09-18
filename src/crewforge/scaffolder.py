@@ -9,8 +9,10 @@ and subprocess management.
 import subprocess
 import shutil
 import re
+import os
+import getpass
 from pathlib import Path
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple, List
 import logging
 
 
@@ -349,4 +351,389 @@ class CrewAIScaffolder:
             result["meets_minimum"] = True
 
         result["valid"] = True
+        return result
+
+    # LLM Provider Configuration Methods
+
+    def get_supported_providers(self) -> List[str]:
+        """
+        Get list of supported LLM providers compatible with liteLLM.
+
+        Returns:
+            List of supported provider names
+        """
+        return ["openai", "anthropic", "google", "groq", "sambanova"]
+
+    def validate_provider(self, provider: str) -> Dict[str, Any]:
+        """
+        Validate if the given provider is supported.
+
+        Args:
+            provider: Provider name to validate
+
+        Returns:
+            Dictionary containing validation results
+        """
+        result = {
+            "valid": False,
+            "provider": provider.lower() if provider else "",
+            "error": None,
+        }
+
+        if not provider or not provider.strip():
+            result["error"] = "Provider name cannot be empty"
+            return result
+
+        normalized_provider = provider.lower().strip()
+        supported_providers = self.get_supported_providers()
+
+        if normalized_provider not in supported_providers:
+            result["error"] = (
+                f"Provider '{provider}' is not supported. Supported providers: {supported_providers}"
+            )
+            return result
+
+        result["valid"] = True
+        result["provider"] = normalized_provider
+        return result
+
+    def get_api_key_env_var(self, provider: str) -> str:
+        """
+        Get the environment variable name for the given provider's API key.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            Environment variable name
+
+        Raises:
+            ValueError: If provider is not supported
+        """
+        env_var_mapping = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "sambanova": "SAMBANOVA_API_KEY",
+        }
+
+        if provider not in env_var_mapping:
+            raise ValueError(f"Unsupported provider: {provider}")
+
+        return env_var_mapping[provider]
+
+    def check_api_key(self, provider: str) -> Dict[str, Any]:
+        """
+        Check if API key is available for the given provider.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            Dictionary containing API key availability information
+        """
+        result = {"available": False, "source": None, "key": None, "error": None}
+
+        try:
+            env_var = self.get_api_key_env_var(provider)
+            api_key = os.getenv(env_var)
+
+            if api_key:
+                result["available"] = True
+                result["source"] = "environment"
+                result["key"] = api_key
+            else:
+                result["error"] = f"API key not found in environment variable {env_var}"
+
+        except ValueError as e:
+            result["error"] = str(e)
+
+        return result
+
+    def validate_api_key_format(self, provider: str, api_key: str) -> Dict[str, Any]:
+        """
+        Validate API key format for the given provider.
+
+        Args:
+            provider: Provider name
+            api_key: API key to validate
+
+        Returns:
+            Dictionary containing validation results
+        """
+        result = {"valid": False, "error": None}
+
+        if not api_key or not api_key.strip():
+            result["error"] = "API key cannot be empty"
+            return result
+
+        # Provider-specific validation patterns
+        patterns = {
+            "openai": r"^sk-[a-zA-Z0-9]{20,}$",
+            "anthropic": r"^sk-ant-[a-zA-Z0-9\-_]{20,}$",
+            "google": r"^[a-zA-Z0-9\-_]{20,}$",
+            "groq": r"^gsk_[a-zA-Z0-9]{50,}$",
+            "sambanova": r"^[a-zA-Z0-9\-_]{20,}$",
+        }
+
+        pattern = patterns.get(provider)
+        if not pattern:
+            # If no specific pattern, just check it's not empty
+            result["valid"] = True
+            return result
+
+        import re
+
+        if re.match(pattern, api_key.strip()):
+            result["valid"] = True
+        else:
+            result["error"] = f"API key has invalid format for {provider} provider"
+
+        return result
+
+    def configure_provider(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Configure LLM provider with validation.
+
+        Args:
+            config: Configuration dictionary with provider, api_key, and optional model
+
+        Returns:
+            Dictionary containing configuration results
+        """
+        result = {"success": False, "provider": None, "model": None, "error": None}
+
+        # Validate provider
+        provider = config.get("provider", "").strip()
+        provider_validation = self.validate_provider(provider)
+        if not provider_validation["valid"]:
+            result["error"] = provider_validation["error"]
+            return result
+
+        provider = provider_validation["provider"]
+        result["provider"] = provider
+
+        # Validate API key
+        api_key = config.get("api_key", "").strip()
+        key_validation = self.validate_api_key_format(provider, api_key)
+        if not key_validation["valid"]:
+            result["error"] = key_validation["error"]
+            return result
+
+        # Set model (use default if not provided)
+        default_models = {
+            "openai": "gpt-3.5-turbo",
+            "anthropic": "claude-3-sonnet-20240229",
+            "google": "gemini-pro",
+            "groq": "mixtral-8x7b-32768",
+            "sambanova": "Meta-Llama-3.1-8B-Instruct",
+        }
+
+        model = config.get("model") or default_models.get(provider)
+        result["model"] = model
+
+        result["success"] = True
+        return result
+
+    def generate_provider_config_file(
+        self, project_path: Path, config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Generate provider configuration file for CrewAI project.
+
+        Args:
+            project_path: Path to the CrewAI project directory
+            config: Configuration dictionary with provider settings
+
+        Returns:
+            Dictionary containing generation results
+        """
+        result = {"success": False, "config_file": None, "error": None}
+
+        try:
+            config_file = project_path / ".env"
+
+            # Generate environment variables content
+            env_content = []
+
+            # Add API key
+            provider = config["provider"]
+            api_key = config["api_key"]
+            env_var = self.get_api_key_env_var(provider)
+            env_content.append(f"{env_var}={api_key}")
+
+            # Add model configuration
+            if config.get("model"):
+                env_content.append(f"LLM_MODEL={config['model']}")
+
+            # Add provider configuration
+            env_content.append(f"LLM_PROVIDER={provider}")
+
+            # Write to .env file
+            with open(config_file, "w") as f:
+                f.write("\n".join(env_content) + "\n")
+
+            result["success"] = True
+            result["config_file"] = config_file
+
+        except Exception as e:
+            result["error"] = f"Failed to generate config file: {str(e)}"
+
+        return result
+
+    def create_crew_with_provider(
+        self,
+        project_name: str,
+        target_directory: Path,
+        provider_config: Dict[str, Any],
+        min_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create CrewAI project with LLM provider configuration.
+
+        Args:
+            project_name: Name of the crew project
+            target_directory: Directory where project should be created
+            provider_config: LLM provider configuration
+            min_version: Optional minimum CrewAI version requirement
+
+        Returns:
+            Dictionary containing creation results
+        """
+        result = {
+            "success": False,
+            "project_path": None,
+            "provider_configured": False,
+            "error": None,
+        }
+
+        try:
+            # First create the basic CrewAI project
+            crew_result = self.create_crew(project_name, target_directory, min_version)
+            if not crew_result["success"]:
+                result["error"] = (
+                    f"Failed to create CrewAI project: {crew_result.get('stderr', 'Unknown error')}"
+                )
+                return result
+
+            project_path = crew_result["project_path"]
+            result["project_path"] = project_path
+
+            # Configure provider
+            config_result = self.generate_provider_config_file(
+                project_path, provider_config
+            )
+            if not config_result["success"]:
+                result["error"] = config_result["error"]
+                return result
+
+            result["success"] = True
+            result["provider_configured"] = True
+
+        except Exception as e:
+            result["error"] = f"Failed to create project with provider: {str(e)}"
+
+        return result
+
+    def interactive_provider_selection(self) -> Dict[str, Any]:
+        """
+        Interactive provider selection workflow.
+
+        Returns:
+            Dictionary containing selected provider or cancellation
+        """
+        result = {"provider": None, "cancelled": False}
+
+        providers = self.get_supported_providers()
+
+        print("\nAvailable LLM Providers:")
+        for i, provider in enumerate(providers, 1):
+            print(f"{i}. {provider}")
+
+        while True:
+            try:
+                choice = input("\nSelect a provider (number): ").strip()
+
+                if not choice:
+                    result["cancelled"] = True
+                    return result
+
+                provider_index = int(choice) - 1
+                if 0 <= provider_index < len(providers):
+                    result["provider"] = providers[provider_index]
+                    return result
+                else:
+                    print(f"Invalid choice. Please select 1-{len(providers)}")
+
+            except (ValueError, KeyboardInterrupt):
+                print(
+                    "\nInvalid input. Please enter a number or press Ctrl+C to cancel."
+                )
+                continue
+
+    def interactive_api_key_input(self, provider: str) -> Dict[str, Any]:
+        """
+        Interactive API key input workflow.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            Dictionary containing API key or error information
+        """
+        result = {"api_key": None, "cancelled": False, "error": None}
+
+        while True:
+            try:
+                print(f"\nEnter API key for {provider}:")
+                api_key = getpass.getpass("API Key: ").strip()
+
+                if not api_key:
+                    result["cancelled"] = True
+                    return result
+
+                # Validate format
+                validation = self.validate_api_key_format(provider, api_key)
+                if validation["valid"]:
+                    result["api_key"] = api_key
+                    return result
+                else:
+                    print(f"Error: {validation['error']}")
+                    print("Please try again.")
+
+            except KeyboardInterrupt:
+                result["cancelled"] = True
+                return result
+
+    def configure_llm_provider(self) -> Dict[str, Any]:
+        """
+        Full LLM provider configuration workflow.
+
+        Returns:
+            Dictionary containing configuration results
+        """
+        result = {"success": False, "provider": None, "api_key": None, "error": None}
+
+        # Select provider
+        provider_selection = self.interactive_provider_selection()
+        if provider_selection["cancelled"]:
+            result["error"] = "Provider selection cancelled"
+            return result
+
+        provider = provider_selection["provider"]
+        result["provider"] = provider
+
+        # Get API key
+        api_key_input = self.interactive_api_key_input(provider)
+        if api_key_input["cancelled"]:
+            result["error"] = "API key input cancelled"
+            return result
+
+        if api_key_input["error"]:
+            result["error"] = api_key_input["error"]
+            return result
+
+        result["api_key"] = api_key_input["api_key"]
+        result["success"] = True
         return result

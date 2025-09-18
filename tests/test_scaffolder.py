@@ -8,6 +8,8 @@ error handling, and edge cases for project creation.
 import pytest
 import subprocess
 import tempfile
+import os
+import getpass
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import logging
@@ -512,3 +514,300 @@ class TestCrewAIError:
         """Test CrewAIError inherits from Exception."""
         error = CrewAIError("Test")
         assert isinstance(error, Exception)
+
+
+class TestLLMProviderConfiguration:
+    """Test suite for LLM provider selection and API key configuration."""
+
+    def test_get_supported_providers(self):
+        """Test getting list of supported LLM providers."""
+        scaffolder = CrewAIScaffolder()
+        providers = scaffolder.get_supported_providers()
+
+        expected_providers = ["openai", "anthropic", "google", "groq", "sambanova"]
+        assert providers == expected_providers
+        assert isinstance(providers, list)
+        assert len(providers) > 0
+
+    def test_validate_provider_valid(self):
+        """Test validating supported LLM providers."""
+        scaffolder = CrewAIScaffolder()
+
+        valid_providers = ["openai", "anthropic", "google", "groq", "sambanova"]
+        for provider in valid_providers:
+            result = scaffolder.validate_provider(provider)
+            assert result["valid"] is True
+            assert result["provider"] == provider
+            assert result["error"] is None
+
+    def test_validate_provider_invalid(self):
+        """Test validation of unsupported LLM providers."""
+        scaffolder = CrewAIScaffolder()
+
+        invalid_providers = ["invalid", "unknown", "fake_provider"]
+        for provider in invalid_providers:
+            result = scaffolder.validate_provider(provider)
+            assert result["valid"] is False
+            assert result["provider"] == provider
+            assert "not supported" in result["error"].lower()
+
+        # Test empty provider separately
+        result = scaffolder.validate_provider("")
+        assert result["valid"] is False
+        assert result["provider"] == ""
+        assert "cannot be empty" in result["error"].lower()
+
+    def test_validate_provider_case_insensitive(self):
+        """Test provider validation is case-insensitive."""
+        scaffolder = CrewAIScaffolder()
+
+        case_variants = ["OpenAI", "ANTHROPIC", "Google", "gRoQ", "SambaNova"]
+        for provider in case_variants:
+            result = scaffolder.validate_provider(provider)
+            assert result["valid"] is True
+            assert result["provider"] == provider.lower()
+
+    def test_get_api_key_env_var_mapping(self):
+        """Test getting correct environment variable names for providers."""
+        scaffolder = CrewAIScaffolder()
+
+        expected_mapping = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "google": "GOOGLE_API_KEY",
+            "groq": "GROQ_API_KEY",
+            "sambanova": "SAMBANOVA_API_KEY",
+        }
+
+        for provider, expected_env_var in expected_mapping.items():
+            env_var = scaffolder.get_api_key_env_var(provider)
+            assert env_var == expected_env_var
+
+    def test_get_api_key_env_var_invalid_provider(self):
+        """Test getting environment variable for invalid provider."""
+        scaffolder = CrewAIScaffolder()
+
+        with pytest.raises(ValueError, match="Unsupported provider"):
+            scaffolder.get_api_key_env_var("invalid_provider")
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test_key_123"})
+    def test_check_api_key_from_environment(self):
+        """Test checking API key from environment variables."""
+        scaffolder = CrewAIScaffolder()
+
+        result = scaffolder.check_api_key("openai")
+        assert result["available"] is True
+        assert result["source"] == "environment"
+        assert result["key"].startswith("test_key")
+        assert result["error"] is None
+
+    def test_check_api_key_missing_from_environment(self):
+        """Test checking API key when not in environment."""
+        scaffolder = CrewAIScaffolder()
+
+        with patch.dict("os.environ", {}, clear=True):
+            result = scaffolder.check_api_key("openai")
+            assert result["available"] is False
+            assert result["source"] is None
+            assert result["key"] is None
+            assert "not found in environment" in result["error"]
+
+    def test_validate_api_key_format_openai(self):
+        """Test API key format validation for OpenAI."""
+        scaffolder = CrewAIScaffolder()
+
+        # Valid OpenAI API key format (starts with sk-)
+        valid_key = "sk-1234567890abcdef1234567890abcdef12345678"
+        result = scaffolder.validate_api_key_format("openai", valid_key)
+        assert result["valid"] is True
+        assert result["error"] is None
+
+        # Invalid format
+        invalid_key = "invalid_key_format"
+        result = scaffolder.validate_api_key_format("openai", invalid_key)
+        assert result["valid"] is False
+        assert "invalid format" in result["error"].lower()
+
+    def test_validate_api_key_format_anthropic(self):
+        """Test API key format validation for Anthropic."""
+        scaffolder = CrewAIScaffolder()
+
+        # Valid Anthropic API key format (starts with sk-ant-)
+        valid_key = "sk-ant-api03-1234567890abcdef"
+        result = scaffolder.validate_api_key_format("anthropic", valid_key)
+        assert result["valid"] is True
+
+        # Invalid format
+        invalid_key = "sk-1234567890"
+        result = scaffolder.validate_api_key_format("anthropic", invalid_key)
+        assert result["valid"] is False
+
+    def test_configure_provider_with_api_key(self):
+        """Test configuring LLM provider with API key."""
+        scaffolder = CrewAIScaffolder()
+
+        config = {
+            "provider": "openai",
+            "api_key": "sk-1234567890abcdef1234567890abcdef12345678",
+            "model": "gpt-3.5-turbo",
+        }
+
+        result = scaffolder.configure_provider(config)
+        assert result["success"] is True
+        assert result["provider"] == "openai"
+        assert result["model"] == "gpt-3.5-turbo"
+        assert result["error"] is None
+
+    def test_configure_provider_invalid_provider(self):
+        """Test configuring invalid LLM provider."""
+        scaffolder = CrewAIScaffolder()
+
+        config = {"provider": "invalid_provider", "api_key": "test_key"}
+
+        result = scaffolder.configure_provider(config)
+        assert result["success"] is False
+        assert "not supported" in result["error"].lower()
+
+    def test_configure_provider_invalid_api_key(self):
+        """Test configuring provider with invalid API key."""
+        scaffolder = CrewAIScaffolder()
+
+        config = {"provider": "openai", "api_key": "invalid_key_format"}
+
+        result = scaffolder.configure_provider(config)
+        assert result["success"] is False
+        assert "invalid format" in result["error"].lower()
+
+    def test_generate_provider_config_file(self):
+        """Test generating provider configuration file for CrewAI project."""
+        scaffolder = CrewAIScaffolder()
+
+        config = {"provider": "openai", "api_key": "sk-test123456789", "model": "gpt-4"}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_path = Path(temp_dir) / "test_project"
+            project_path.mkdir()
+
+            result = scaffolder.generate_provider_config_file(project_path, config)
+
+            assert result["success"] is True
+            config_file = project_path / ".env"
+            assert config_file.exists()
+
+            # Check config file contents
+            content = config_file.read_text()
+            assert "OPENAI_API_KEY=sk-test123456789" in content
+            assert "LLM_MODEL=gpt-4" in content
+
+    def test_create_crew_with_provider_config(self):
+        """Test creating CrewAI project with LLM provider configuration."""
+        scaffolder = CrewAIScaffolder()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_directory = Path(temp_dir)
+
+            provider_config = {
+                "provider": "openai",
+                "api_key": "sk-test123456789",
+                "model": "gpt-3.5-turbo",
+            }
+
+            with patch.object(scaffolder, "check_crewai_available", return_value=True):
+                with patch.object(
+                    scaffolder, "validate_crewai_dependency"
+                ) as mock_validate:
+                    mock_validate.return_value = {
+                        "valid": True,
+                        "installed_version": "1.0.0",
+                        "meets_minimum": True,
+                        "error": None,
+                    }
+
+                    with patch("subprocess.run") as mock_run:
+                        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
+
+                        # Mock project directory creation
+                        project_path = target_directory / "test_project"
+                        project_path.mkdir(parents=True)
+
+                        result = scaffolder.create_crew_with_provider(
+                            "test_project", target_directory, provider_config
+                        )
+
+                        assert result["success"] is True
+                        assert result["provider_configured"] is True
+                        assert result["project_path"] == project_path
+
+    def test_interactive_provider_selection(self):
+        """Test interactive provider selection workflow."""
+        scaffolder = CrewAIScaffolder()
+
+        # Mock user input for provider selection
+        with patch("builtins.input", side_effect=["2"]):  # Select anthropic (index 2)
+            result = scaffolder.interactive_provider_selection()
+
+            assert result["provider"] == "anthropic"
+            assert result["cancelled"] is False
+
+    def test_interactive_provider_selection_invalid_choice(self):
+        """Test interactive provider selection with invalid choice."""
+        scaffolder = CrewAIScaffolder()
+
+        # Mock user input: invalid choice, then valid choice
+        with patch(
+            "builtins.input", side_effect=["99", "1"]
+        ):  # Invalid, then select openai
+            result = scaffolder.interactive_provider_selection()
+
+            assert result["provider"] == "openai"
+            assert result["cancelled"] is False
+
+    def test_interactive_api_key_input(self):
+        """Test interactive API key input workflow."""
+        scaffolder = CrewAIScaffolder()
+
+        test_key = "sk-1234567890abcdef1234567890abcdef12345678"
+
+        with patch("getpass.getpass", return_value=test_key):
+            result = scaffolder.interactive_api_key_input("openai")
+
+            assert result["api_key"] == test_key
+            assert result["cancelled"] is False
+            assert result["error"] is None
+
+    def test_interactive_api_key_input_invalid_format(self):
+        """Test interactive API key input with invalid format."""
+        scaffolder = CrewAIScaffolder()
+
+        invalid_key = "invalid_key"
+        valid_key = "sk-1234567890abcdef1234567890abcdef12345678"
+
+        with patch("getpass.getpass", side_effect=[invalid_key, valid_key]):
+            result = scaffolder.interactive_api_key_input("openai")
+
+            assert result["api_key"] == valid_key
+            assert result["cancelled"] is False
+
+    def test_full_provider_configuration_workflow(self):
+        """Test the complete provider configuration workflow."""
+        scaffolder = CrewAIScaffolder()
+
+        # Mock interactive selections
+        with patch.object(
+            scaffolder, "interactive_provider_selection"
+        ) as mock_provider:
+            mock_provider.return_value = {"provider": "openai", "cancelled": False}
+
+            with patch.object(scaffolder, "interactive_api_key_input") as mock_api_key:
+                mock_api_key.return_value = {
+                    "api_key": "sk-test123456789",
+                    "cancelled": False,
+                    "error": None,
+                }
+
+                result = scaffolder.configure_llm_provider()
+
+                assert result["success"] is True
+                assert result["provider"] == "openai"
+                assert result["api_key"] == "sk-test123456789"
+                assert result["error"] is None

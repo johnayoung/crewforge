@@ -1,95 +1,40 @@
-# PROJECT: CrewForge - AI-Powered CrewAI Project Generator
-
-## 📂 PROJECT FILES
-Key project documents (use @ references in prompts):
-- `@docs/BRIEF.md` - Project requirements and success metrics
-- `@docs/SPEC.md` - Technical architecture and implementation details
-- `@docs/ROADMAP.md` - Current milestones, tasks, and progress tracking
-- `@.github/copilot-instructions.md` - This file (project constitution)
-
-## 🎯 CURRENT STATUS
-**Phase:** Implementation
-**Focus:** Milestone 2 Complete - Natural Language Prompt Processing with Validation
-
-## 📋 DEVELOPMENT PRINCIPLES
-- Test-driven development always
-- One task at a time with explicit completion
-- Update ROADMAP.md for all progress tracking
-- Use `uv` for ALL development operations (testing, running, package management)
-- No automatic commits - manual control only
-- Stop after each task for review
-
-## 📝 NOTES
-- Specification validation system successfully implemented and integrated
-- All tests passing (174 passed, 1 skipped)
-- CLI has user-friendly fallback behavior for demo mode when API not configured
-- Use `uv run pytest` for all testing, `uv run python` for script execution
-
 ## Development Standards
 
-### uv-First Development Workflow
-**CRITICAL: Use `uv` for ALL operations - never use pip, python, or pytest directly**
+### Python Best Practices
+- Use type hints for all function parameters and return values (Python 3.11+ features)
+- Leverage `pathlib.Path` over string paths for cross-platform compatibility
+- Implement proper exception handling with specific exception types rather than bare `except` clauses
+- Use dataclasses or Pydantic models for structured data to avoid dict-based configurations
 
-- **Testing**: `uv run pytest` (not `pytest` or `python -m pytest`)
-- **Running scripts**: `uv run python script.py` (not `python script.py`)
-- **Package management**: `uv add package-name` (not `pip install`)
-- **Project execution**: `uv run crewforge` (not direct Python execution)
-- **Development server**: `uv run python -m module` for development servers
-- **Dependency updates**: `uv lock --upgrade` to update uv.lock
-- **Environment info**: `uv show` to display project and environment details
+### CLI Framework Patterns  
+- Structure Click/Typer commands with clear parameter validation and help text
+- Use Click's context passing for shared state between command groups rather than global variables
+- Implement proper exit codes (0 for success, non-zero for errors) and rich error messages for user experience
 
-### Python 3.11+ Best Practices
-- Use pathlib for all file operations instead of os.path for better cross-platform compatibility
-- Leverage type hints with Pydantic models for data validation and serialization
-- Use async/await patterns sparingly - prefer synchronous code for CLI tools unless I/O bound
-- Apply dataclasses or Pydantic BaseModel for structured data over plain dictionaries
-- Import subprocess for external command execution, avoid os.system()
+### LLM Integration Guidelines
+- Always implement retry logic with exponential backoff for liteLLM API calls
+- Use structured output parsing with validation rather than raw string manipulation of LLM responses
+- Track token usage and implement rate limiting to prevent API quota exhaustion
+- Handle provider-specific errors gracefully with fallback mechanisms
 
-### Click/Typer CLI Framework Patterns
-- Use Click decorators for command structure, Typer for modern type-hinted alternatives
-- Group related commands under command groups for better organization
-- Implement progressive disclosure - start with simple commands, add complexity through options
-- Use click.echo() instead of print() for consistent output formatting
-- Handle exceptions gracefully with try-catch and user-friendly error messages
+### Template Engine Guidelines
+- Use Jinja2 autoescaping for security and validate template inputs before rendering
+- Structure templates with inheritance and macros for maintainable and reusable code generation
+- Implement template validation to catch syntax errors before project generation
 
-### OpenAI/Anthropic LLM Guidelines
-- Structure prompts with clear system/user message separation for consistent responses
-- Implement token counting and management to avoid API limits during generation
-- Use streaming responses for long-running operations to provide user feedback
-- Cache LLM responses when possible to reduce API costs and improve performance
-- Add retry logic with exponential backoff for API reliability
-
-### uv Package Management Patterns
-- Use `uv init` for project scaffolding instead of manual setup.py/pyproject.toml creation
-- Leverage `uv add` for dependency management in generated projects
-- Validate uv installation before project generation attempts
-- Use `uv run` for executing generated project commands in isolated environments
-- Include uv lock files in generated project templates for reproducible builds
-
-### Validation and Testing Standards
-- Comprehensive validation system implemented for CrewAI project specifications
-- Use `SpecificationValidator` for validating LLM-generated project specs
-- Implement completeness scoring (0-1.0) for specification quality assessment
-- Test validation with edge cases: empty fields, invalid formats, missing dependencies
-- Integration tests validate interaction between validation and prompt parsing
-
-### Jinja2 Templating Guidelines
-- Separate template logic from generation logic - keep templates focused on structure
-- Use template inheritance for common project scaffolding patterns
-- Escape user input in templates to prevent injection vulnerabilities
-- Organize templates by project type for maintainable template libraries
-- Test templates with edge case data to ensure robust generation
+### Package Management Guidelines
+- Use uv for all dependency management operations instead of pip for faster resolution
+- Pin dependencies with version ranges in pyproject.toml for reproducible builds
+- Implement proper virtual environment isolation for generated projects
 
 ### Code Quality Standards
-- Wrap external command execution in try-catch with specific error handling per tool (uv, crewai)
-- Use structured logging with different levels for user feedback vs debugging information
-- Implement validation at multiple stages: input parsing, generation, and final execution
-- Create custom exception classes for different failure modes (validation, generation, execution)
-- Add timeout handling for external command execution and LLM API calls
+- Run `mypy --strict` for comprehensive type checking before commits
+- Use `ruff` for linting and formatting to catch common Python pitfalls early
+- Implement comprehensive error handling for subprocess calls (CrewAI CLI integration)
+- Use structured logging with appropriate levels rather than print statements for debugging
 
-### Project-Specific Conventions
-- Name generated agents with descriptive, action-oriented names (ResearchAgent, not agent1)
-- Follow CrewAI naming patterns for consistency with framework expectations
-- Use kebab-case for generated project directory names, snake_case for Python modules
-- Structure generated projects with clear src/ separation and tests/ directory
-- Include comprehensive README.md in generated projects with setup and usage instructions
+### Project Conventions
+- Follow CrewAI naming conventions for agent roles and task names in generated projects
+- Organize modules by domain (parsing, scaffolding, validation) rather than by layer
+- Use absolute imports with clear module paths for better IDE support and maintainability
+- Store templates and configuration patterns in version-controlled directories for consistency
