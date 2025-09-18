@@ -16,6 +16,120 @@ from crewforge.llm import LLMClient, LLMError
 from crewforge.validation import ValidationResult, ValidationIssue, IssueSeverity
 
 
+class LLMProvider(Enum):
+    """Supported LLM providers compatible with liteLLM."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GOOGLE = "google"
+    GROQ = "groq"
+    SAMBA_NOVA = "sambanova"
+
+
+class ProjectStructure(Enum):
+    """Project structure preferences."""
+
+    STANDARD = "standard"  # Standard CrewAI structure
+    FLAT = "flat"  # Minimal folder structure
+    DETAILED = "detailed"  # Extended structure with more folders
+
+
+class NamingConvention(Enum):
+    """Agent naming conventions."""
+
+    DESCRIPTIVE = "descriptive"  # ResearchAnalyst, ContentWriter
+    ROLE_BASED = "role_based"  # Researcher, Writer
+    FUNCTIONAL = "functional"  # DataGatherer, ReportGenerator
+
+
+@dataclass
+class UserPreferences:
+    """Configuration preferences collected from user."""
+
+    # LLM and API preferences
+    preferred_llm_provider: Optional[LLMProvider] = None
+    model_temperature: Optional[float] = None  # 0.0-1.0
+    max_tokens_per_response: Optional[int] = None
+
+    # Project structure preferences
+    project_structure: Optional[ProjectStructure] = None
+    naming_convention: Optional[NamingConvention] = None
+    include_examples: Optional[bool] = None
+
+    # CrewAI specific preferences
+    max_agents_per_crew: Optional[int] = None
+    max_tasks_per_agent: Optional[int] = None
+    prefer_sequential_execution: Optional[bool] = None
+
+    # Tool integration preferences
+    include_web_search: Optional[bool] = None
+    include_file_operations: Optional[bool] = None
+    include_data_analysis: Optional[bool] = None
+
+    # Output and documentation preferences
+    verbose_output: Optional[bool] = None
+    include_detailed_documentation: Optional[bool] = None
+    generate_readme: Optional[bool] = None
+
+    # User experience preferences
+    interactive_mode: Optional[bool] = None  # Ask for clarification during generation
+    auto_install_dependencies: Optional[bool] = None
+    create_virtual_environment: Optional[bool] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert preferences to dictionary format."""
+        result = {}
+        for field_name, field_value in self.__dict__.items():
+            if field_value is not None:
+                if isinstance(field_value, Enum):
+                    result[field_name] = field_value.value
+                else:
+                    result[field_name] = field_value
+        return result
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserPreferences":
+        """Create UserPreferences from dictionary."""
+        preferences = cls()
+
+        # Handle enum fields
+        enum_fields = {
+            "preferred_llm_provider": LLMProvider,
+            "project_structure": ProjectStructure,
+            "naming_convention": NamingConvention,
+        }
+
+        for field_name, value in data.items():
+            if hasattr(preferences, field_name):
+                if field_name in enum_fields and value is not None:
+                    try:
+                        setattr(preferences, field_name, enum_fields[field_name](value))
+                    except ValueError:
+                        # Skip invalid enum values
+                        continue
+                else:
+                    setattr(preferences, field_name, value)
+
+        return preferences
+
+    def merge(self, other: "UserPreferences") -> "UserPreferences":
+        """Merge with another preferences object, with other taking precedence."""
+        merged_data = self.to_dict()
+        merged_data.update(other.to_dict())
+        return UserPreferences.from_dict(merged_data)
+
+
+class PreferenceCategory(Enum):
+    """Categories of preferences for organized collection."""
+
+    LLM_SETUP = "llm_setup"
+    PROJECT_STRUCTURE = "project_structure"
+    CREW_CONFIGURATION = "crew_configuration"
+    TOOL_INTEGRATION = "tool_integration"
+    OUTPUT_OPTIONS = "output_options"
+    USER_EXPERIENCE = "user_experience"
+
+
 class QuestionType(Enum):
     """Types of clarification questions."""
 
@@ -86,6 +200,7 @@ class ConversationContext:
     session_id: str
     initial_specification: Dict[str, Any]
     current_specification: Dict[str, Any]
+    user_preferences: UserPreferences = field(default_factory=UserPreferences)
     conversation_state: ConversationState = ConversationState.INITIAL
     turns: List[ConversationTurn] = field(default_factory=list)
     pending_questions: List[Question] = field(default_factory=list)
@@ -154,6 +269,91 @@ Only generate questions for ERROR and WARNING level issues that require user inp
 Skip INFO level issues and issues that are purely structural validation.
 
 Return your response as a valid JSON array of question objects."""
+
+    PREFERENCE_COLLECTION_PROMPTS = {
+        PreferenceCategory.LLM_SETUP: """Let me help you configure your LLM preferences for this CrewAI project.
+
+Current specification suggests the following AI tasks: {tasks_summary}
+
+Which LLM provider would you prefer to use?
+1. OpenAI (GPT-3.5/GPT-4) - Most reliable, good for complex reasoning
+2. Anthropic (Claude) - Excellent for analysis and writing tasks
+3. Google (Gemini) - Strong at code generation and structured tasks
+4. Groq (Llama/Mixtral) - Fast inference, good for simpler tasks
+5. SambaNova - Efficient for text processing tasks
+
+Please choose (1-5) or specify your preference: """,
+        PreferenceCategory.PROJECT_STRUCTURE: """I'll help you set up the project structure for optimal organization.
+
+Based on your project type, I can create:
+1. Standard - CrewAI default structure with src/, config/, tools/ folders
+2. Flat - Minimal structure for simple projects (all files in root)
+3. Detailed - Extended structure with examples/, docs/, tests/ folders
+
+For agent naming, would you prefer:
+A. Descriptive names (ResearchAnalyst, ContentWriter)
+B. Role-based names (Researcher, Writer) 
+C. Functional names (DataGatherer, ReportGenerator)
+
+Structure preference (1-3): 
+Naming convention (A-C): """,
+        PreferenceCategory.CREW_CONFIGURATION: """Let me configure your CrewAI crew settings for optimal performance.
+
+For your project with {agent_count} agents and {task_count} tasks:
+
+Maximum agents per crew (recommended 3-5): {max_agents_suggestion}
+Maximum tasks per agent (recommended 1-3): {max_tasks_suggestion}
+
+Execution preference:
+1. Sequential - Tasks run one after another (more predictable)
+2. Hierarchical - Manager agent delegates tasks (more flexible)
+
+Would you like sequential execution? (y/n): """,
+        PreferenceCategory.TOOL_INTEGRATION: """I can integrate various tools to enhance your agents' capabilities.
+
+Based on your project requirements, these tools might be useful:
+
+Web Search & Research:
+- Include web search capabilities? (y/n)
+- Include web scraping tools? (y/n)
+
+File & Data Operations:
+- Include file read/write operations? (y/n)  
+- Include data analysis tools? (y/n)
+- Include database connections? (y/n)
+
+Communication & Integration:
+- Include email/messaging tools? (y/n)
+- Include API integration tools? (y/n)
+
+Please specify your preferences: """,
+        PreferenceCategory.OUTPUT_OPTIONS: """Let me configure the output and documentation preferences.
+
+Documentation Generation:
+- Generate detailed README with setup instructions? (y/n)
+- Include code examples and usage guides? (y/n)
+- Create API documentation for custom tools? (y/n)
+
+Output Verbosity:
+- Enable verbose logging during execution? (y/n)
+- Include performance metrics in output? (y/n)
+- Show intermediate step results? (y/n)
+
+Please specify your preferences: """,
+        PreferenceCategory.USER_EXPERIENCE: """Finally, let me configure your development workflow preferences.
+
+Development Environment:
+- Automatically install dependencies with uv? (y/n)
+- Create virtual environment for project? (y/n)
+- Set up pre-commit hooks for code quality? (y/n)
+
+Interactive Features:
+- Enable interactive mode (ask for clarification during generation)? (y/n)
+- Auto-validate generated code before completion? (y/n)
+- Include example usage in generated project? (y/n)
+
+Please specify your preferences: """,
+    }
 
     def __init__(self, llm_client: LLMClient):
         """
@@ -350,6 +550,158 @@ Return your response as a valid JSON array of question objects."""
         context.last_activity = datetime.now()
 
         return questions
+
+    async def start_preference_collection(
+        self,
+        context: ConversationContext,
+        categories: Optional[List[PreferenceCategory]] = None,
+    ) -> ConversationContext:
+        """
+        Start preference collection as part of the conversation flow.
+
+        Args:
+            context: Current conversation context
+            categories: Specific categories to collect (all if None)
+
+        Returns:
+            Updated conversation context with collected preferences
+        """
+        # Collect preferences using LLM for intelligent defaults
+        collected_preferences = await self.collect_user_preferences(context, categories)
+
+        # Update context with collected preferences
+        updated_context = self.update_context_preferences(
+            context, collected_preferences
+        )
+
+        # Generate preference confirmation questions
+        preference_questions = self._generate_preference_confirmation_questions(
+            collected_preferences, categories or list(PreferenceCategory)
+        )
+
+        # Add preference questions to pending questions
+        updated_context.pending_questions.extend(preference_questions)
+        updated_context.conversation_state = ConversationState.ASKING_QUESTIONS
+
+        return updated_context
+
+    def _generate_preference_confirmation_questions(
+        self, preferences: UserPreferences, categories: List[PreferenceCategory]
+    ) -> List[Question]:
+        """
+        Generate questions to confirm and refine collected preferences.
+
+        Args:
+            preferences: Collected preferences to confirm
+            categories: Categories that were processed
+
+        Returns:
+            List of confirmation questions
+        """
+        questions = []
+
+        for category in categories:
+            # Create a summary of preferences for this category
+            category_prefs = self._extract_category_preferences(preferences, category)
+            if not category_prefs:
+                continue
+
+            # Generate confirmation question
+            question = Question(
+                question_type=QuestionType.INCOMPLETE_SPEC,
+                field=f"preferences.{category.value}",
+                question=f"I've suggested these {category.value.replace('_', ' ')} preferences: {self._format_preferences_summary(category_prefs)}. Would you like to modify any of these? (y/n)",
+                context=f"Confirming AI-suggested preferences for {category.value}",
+                suggestions=["y", "n", "keep defaults", "customize"],
+            )
+            questions.append(question)
+
+        return questions
+
+    def _extract_category_preferences(
+        self, preferences: UserPreferences, category: PreferenceCategory
+    ) -> Dict[str, Any]:
+        """
+        Extract preferences relevant to a specific category.
+
+        Args:
+            preferences: Full preferences object
+            category: Category to extract
+
+        Returns:
+            Dictionary of category-specific preferences
+        """
+        category_fields = {
+            PreferenceCategory.LLM_SETUP: [
+                "preferred_llm_provider",
+                "model_temperature",
+                "max_tokens_per_response",
+            ],
+            PreferenceCategory.PROJECT_STRUCTURE: [
+                "project_structure",
+                "naming_convention",
+                "include_examples",
+            ],
+            PreferenceCategory.CREW_CONFIGURATION: [
+                "max_agents_per_crew",
+                "max_tasks_per_agent",
+                "prefer_sequential_execution",
+            ],
+            PreferenceCategory.TOOL_INTEGRATION: [
+                "include_web_search",
+                "include_file_operations",
+                "include_data_analysis",
+            ],
+            PreferenceCategory.OUTPUT_OPTIONS: [
+                "verbose_output",
+                "include_detailed_documentation",
+                "generate_readme",
+            ],
+            PreferenceCategory.USER_EXPERIENCE: [
+                "interactive_mode",
+                "auto_install_dependencies",
+                "create_virtual_environment",
+            ],
+        }
+
+        fields = category_fields.get(category, [])
+        result = {}
+
+        for field in fields:
+            value = getattr(preferences, field, None)
+            if value is not None:
+                result[field] = value
+
+        return result
+
+    def _format_preferences_summary(self, category_prefs: Dict[str, Any]) -> str:
+        """
+        Format preferences for user-friendly display.
+
+        Args:
+            category_prefs: Dictionary of preferences
+
+        Returns:
+            Formatted string summary
+        """
+        if not category_prefs:
+            return "none"
+
+        formatted_items = []
+        for key, value in category_prefs.items():
+            # Convert enum values to readable format
+            if hasattr(value, "value"):
+                display_value = value.value.replace("_", " ").title()
+            elif isinstance(value, bool):
+                display_value = "Yes" if value else "No"
+            else:
+                display_value = str(value)
+
+            # Convert field names to readable format
+            display_key = key.replace("_", " ").title()
+            formatted_items.append(f"{display_key}: {display_value}")
+
+        return "; ".join(formatted_items)
 
     async def process_answers(
         self, context: ConversationContext, answers: List[UserResponse]
@@ -725,3 +1077,245 @@ Return your response as a valid JSON array of question objects."""
                 return True
 
         return False
+
+    async def collect_user_preferences(
+        self,
+        context: ConversationContext,
+        categories: Optional[List[PreferenceCategory]] = None,
+    ) -> UserPreferences:
+        """
+        Collect user preferences through guided prompts.
+
+        Args:
+            context: Current conversation context with project specification
+            categories: Specific preference categories to collect (all if None)
+
+        Returns:
+            UserPreferences object with collected preferences
+
+        Raises:
+            ClarificationError: If preference collection fails
+        """
+        if categories is None:
+            categories = list(PreferenceCategory)
+
+        preferences = UserPreferences()
+
+        for category in categories:
+            try:
+                category_preferences = await self._collect_category_preferences(
+                    context, category
+                )
+                preferences = preferences.merge(category_preferences)
+            except Exception as e:
+                # Log error but continue with other categories
+                continue
+
+        return preferences
+
+    async def _collect_category_preferences(
+        self, context: ConversationContext, category: PreferenceCategory
+    ) -> UserPreferences:
+        """
+        Collect preferences for a specific category.
+
+        Args:
+            context: Current conversation context
+            category: Category to collect preferences for
+
+        Returns:
+            UserPreferences with category-specific preferences set
+        """
+        preferences = UserPreferences()
+
+        # Get base prompt for this category
+        if category not in self.PREFERENCE_COLLECTION_PROMPTS:
+            return preferences
+
+        base_prompt = self.PREFERENCE_COLLECTION_PROMPTS[category]
+
+        # Customize prompt with context-specific information
+        prompt = self._customize_preference_prompt(base_prompt, context, category)
+
+        try:
+            # Use LLM to suggest intelligent defaults
+            suggestion_prompt = f"""
+            Based on this project specification: {json.dumps(context.current_specification, indent=2)}
+            
+            Suggest optimal configuration preferences for the {category.value} category.
+            Consider the project type, complexity, and mentioned requirements.
+            
+            Return suggestions as a JSON object with preference field names as keys.
+            Only include fields you're confident about. Use null for uncertain preferences.
+            
+            Example format:
+            {{
+                "preferred_llm_provider": "openai",
+                "max_agents_per_crew": 3,
+                "include_examples": true
+            }}
+            """
+
+            # Get intelligent defaults from LLM
+            response = await self.llm_client.complete(
+                prompt=suggestion_prompt, max_tokens=500, temperature=0.3
+            )
+
+            # Parse LLM suggestions
+            try:
+                suggested_preferences = json.loads(response.strip())
+                preferences = UserPreferences.from_dict(suggested_preferences)
+            except json.JSONDecodeError:
+                # Fall back to defaults if parsing fails
+                preferences = self._get_default_preferences_for_category(category)
+
+        except LLMError:
+            # Fall back to hardcoded defaults
+            preferences = self._get_default_preferences_for_category(category)
+
+        return preferences
+
+    def _customize_preference_prompt(
+        self,
+        base_prompt: str,
+        context: ConversationContext,
+        category: PreferenceCategory,
+    ) -> str:
+        """
+        Customize preference collection prompt with context-specific information.
+
+        Args:
+            base_prompt: Base template prompt
+            context: Current conversation context
+            category: Preference category being collected
+
+        Returns:
+            Customized prompt string
+        """
+        spec = context.current_specification
+
+        # Extract context information
+        agents = spec.get("agents", [])
+        tasks = spec.get("tasks", [])
+
+        # Build context replacements
+        replacements = {
+            "tasks_summary": self._summarize_tasks(tasks),
+            "agent_count": str(len(agents)),
+            "task_count": str(len(tasks)),
+            "max_agents_suggestion": str(min(5, max(3, len(agents)))),
+            "max_tasks_suggestion": str(
+                min(3, max(1, len(tasks) // len(agents) if agents else 1))
+            ),
+        }
+
+        # Apply replacements
+        customized_prompt = base_prompt
+        for placeholder, value in replacements.items():
+            customized_prompt = customized_prompt.replace(f"{{{placeholder}}}", value)
+
+        return customized_prompt
+
+    def _summarize_tasks(self, tasks: List[Dict[str, Any]]) -> str:
+        """
+        Create a brief summary of tasks for prompt customization.
+
+        Args:
+            tasks: List of task specifications
+
+        Returns:
+            Brief task summary string
+        """
+        if not tasks:
+            return "no specific tasks defined"
+
+        task_types = []
+        for task in tasks:
+            description = task.get("description", "").lower()
+            if "research" in description:
+                task_types.append("research")
+            elif "write" in description or "content" in description:
+                task_types.append("content creation")
+            elif "analy" in description:
+                task_types.append("analysis")
+            elif "social" in description:
+                task_types.append("social media")
+            else:
+                task_types.append("general task")
+
+        # Remove duplicates and create summary
+        unique_types = list(dict.fromkeys(task_types))
+        if len(unique_types) <= 2:
+            return " and ".join(unique_types)
+        else:
+            return f"{', '.join(unique_types[:-1])}, and {unique_types[-1]}"
+
+    def _get_default_preferences_for_category(
+        self, category: PreferenceCategory
+    ) -> UserPreferences:
+        """
+        Get sensible default preferences for a category.
+
+        Args:
+            category: Preference category
+
+        Returns:
+            UserPreferences with category defaults
+        """
+        defaults_map = {
+            PreferenceCategory.LLM_SETUP: UserPreferences(
+                preferred_llm_provider=LLMProvider.OPENAI,
+                model_temperature=0.3,
+                max_tokens_per_response=2000,
+            ),
+            PreferenceCategory.PROJECT_STRUCTURE: UserPreferences(
+                project_structure=ProjectStructure.STANDARD,
+                naming_convention=NamingConvention.DESCRIPTIVE,
+                include_examples=True,
+            ),
+            PreferenceCategory.CREW_CONFIGURATION: UserPreferences(
+                max_agents_per_crew=5,
+                max_tasks_per_agent=2,
+                prefer_sequential_execution=True,
+            ),
+            PreferenceCategory.TOOL_INTEGRATION: UserPreferences(
+                include_web_search=True,
+                include_file_operations=True,
+                include_data_analysis=False,
+            ),
+            PreferenceCategory.OUTPUT_OPTIONS: UserPreferences(
+                verbose_output=False,
+                include_detailed_documentation=True,
+                generate_readme=True,
+            ),
+            PreferenceCategory.USER_EXPERIENCE: UserPreferences(
+                interactive_mode=True,
+                auto_install_dependencies=True,
+                create_virtual_environment=True,
+            ),
+        }
+
+        return defaults_map.get(category, UserPreferences())
+
+    def update_context_preferences(
+        self, context: ConversationContext, new_preferences: UserPreferences
+    ) -> ConversationContext:
+        """
+        Update conversation context with new user preferences.
+
+        Args:
+            context: Current conversation context
+            new_preferences: New preferences to merge
+
+        Returns:
+            Updated conversation context
+        """
+        # Merge preferences
+        updated_preferences = context.user_preferences.merge(new_preferences)
+
+        # Create updated context
+        updated_context = replace(
+            context, user_preferences=updated_preferences, last_activity=datetime.now()
+        )
+
+        return updated_context
