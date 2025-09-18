@@ -16,7 +16,7 @@
 **Delivers:** Intelligent parsing of user prompts into project specifications
 **Components:** Prompt Parser
 
-- [ ] Integrate OpenAI/Anthropic API client with token management
+- [✅] Integrate liteLLM API client with token management and multi-provider support
 - [ ] Design prompt templates for extracting CrewAI project requirements
 - [ ] Implement structured output parsing (agents, tools, tasks, dependencies)
 - [ ] Add rate limiting and API error handling
@@ -32,7 +32,7 @@
 - [ ] Create targeted question generation for missing requirements
 - [ ] Build multi-turn conversation handling with context retention
 - [ ] Add user preference collection for configuration options
-- [ ] Integrate clarifier feedback loop with prompt parser
+- [ ] Integrate clarifier feedback loop with liteLLM-powered prompt parser
 
 **Success Criteria:** System asks targeted questions when prompt lacks required details and incorporates responses
 
@@ -42,7 +42,7 @@
 
 - [ ] Implement subprocess execution for `crewai create crew <name>` command
 - [ ] Add CrewAI CLI dependency validation and version checking
-- [ ] Handle LLM provider selection and API key configuration workflow
+- [ ] Handle LLM provider selection and API key configuration workflow (compatible with liteLLM providers)
 - [ ] Manage project directory creation and file system operations
 - [ ] Add error handling for CrewAI CLI execution failures
 
@@ -53,8 +53,8 @@
 **Components:** Enhancement Engine
 
 - [ ] Design Jinja2 template system for agent configuration customization
-- [ ] Implement intelligent agent role and backstory generation
-- [ ] Create task definition enhancement based on project specifications
+- [ ] Implement intelligent agent role and backstory generation using liteLLM
+- [ ] Create task definition enhancement based on project specifications using liteLLM
 - [ ] Add tool integration patterns for common project types
 - [ ] Build configuration file updating system for agents.yaml and tasks.yaml
 

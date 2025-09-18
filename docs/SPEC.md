@@ -22,7 +22,7 @@
 ## Technology Stack
 - **Language:** Python 3.11+
 - **CLI Framework:** Click or Typer for command interface
-- **LLM Integration:** OpenAI GPT-4 or Anthropic Claude for prompt parsing
+- **LLM Integration:** liteLLM for unified LLM provider access (OpenAI, Anthropic, Google, etc.)
 - **CrewAI CLI:** Dependency on `crewai` package for native scaffolding commands
 - **Template Enhancement:** Jinja2 for intelligent template customization
 - **Package Manager:** uv for dependency management in generated projects
@@ -70,7 +70,7 @@ project_name/
             └── tasks.yaml
 ```
 
-**Provider Integration:** CrewAI CLI handles LLM provider selection (OpenAI, Groq, Anthropic, Google Gemini, SambaNova) and API key configuration through interactive prompts.
+**Provider Integration:** CrewAI CLI handles LLM provider selection (OpenAI, Groq, Anthropic, Google Gemini, SambaNova) and API key configuration through interactive prompts. liteLLM provides unified access to all these providers through a consistent interface.
 
 **Enhancement Target Files:**
 - `src/<project>/config/agents.yaml` - Agent role, goal, backstory customization
@@ -94,7 +94,7 @@ project_name/
 **Purpose:** Convert natural language prompts into structured project specifications
 **Inputs:** Raw text prompts, project context
 **Outputs:** Structured specifications (agents, tools, tasks, dependencies)
-**Dependencies:** OpenAI/Anthropic API, token management
+**Dependencies:** liteLLM for unified LLM access, token management
 **Key Responsibilities:**
 - Extract project intent and requirements from natural language
 - Identify required agents, tools, and task workflows
@@ -186,7 +186,7 @@ project_name/
 
 **Extension Points:**
 - Custom enhancement templates for specific domains or industries
-- Plugin system for additional LLM providers beyond OpenAI/Anthropic
+- Plugin system for additional LLM providers supported by liteLLM
 - Custom validation rules for specialized project requirements
 - Integration with CrewAI CLI updates and new features
 - Configuration profiles for different team or organizational standards
