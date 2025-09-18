@@ -17,7 +17,7 @@
 **Components:** Prompt Parser
 
 - [✅] Integrate liteLLM API client with token management and multi-provider support
-- [ ] Design prompt templates for extracting CrewAI project requirements
+- [✅] Design prompt templates for extracting CrewAI project requirements
 - [ ] Implement structured output parsing (agents, tools, tasks, dependencies)
 - [ ] Add rate limiting and API error handling
 - [ ] Create specification validation and completeness checks
