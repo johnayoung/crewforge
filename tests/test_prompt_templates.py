@@ -282,8 +282,9 @@ class TestPromptTemplatesIntegration:
 
         import os
 
-        if not os.getenv("OPENAI_API_KEY"):
-            pytest.skip("OpenAI API key not available for integration test")
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key or api_key == "test_key" or api_key.startswith("test"):
+            pytest.skip("Real OpenAI API key not available for integration test")
 
         # Create real LLM client
         llm_client = LLMClient(provider="openai", model="gpt-3.5-turbo")

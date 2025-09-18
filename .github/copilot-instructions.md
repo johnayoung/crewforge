@@ -1,4 +1,4 @@
-# PROJECT: [Project Name]
+# PROJECT: CrewForge - AI-Powered CrewAI Project Generator
 
 ## 📂 PROJECT FILES
 Key project documents (use @ references in prompts):
@@ -8,20 +8,35 @@ Key project documents (use @ references in prompts):
 - `@.github/copilot-instructions.md` - This file (project constitution)
 
 ## 🎯 CURRENT STATUS
-**Phase:** [Brief/Spec/Plan/Implementation]
-**Focus:** [Current area of work - get details from ROADMAP.md]
+**Phase:** Implementation
+**Focus:** Milestone 2 Complete - Natural Language Prompt Processing with Validation
 
-## � DEVELOPMENT PRINCIPLES
+## 📋 DEVELOPMENT PRINCIPLES
 - Test-driven development always
 - One task at a time with explicit completion
 - Update ROADMAP.md for all progress tracking
+- Use `uv` for ALL development operations (testing, running, package management)
 - No automatic commits - manual control only
 - Stop after each task for review
 
 ## 📝 NOTES
-[Any important architectural decisions, constraints, or reminders]
+- Specification validation system successfully implemented and integrated
+- All tests passing (174 passed, 1 skipped)
+- CLI has user-friendly fallback behavior for demo mode when API not configured
+- Use `uv run pytest` for all testing, `uv run python` for script execution
 
 ## Development Standards
+
+### uv-First Development Workflow
+**CRITICAL: Use `uv` for ALL operations - never use pip, python, or pytest directly**
+
+- **Testing**: `uv run pytest` (not `pytest` or `python -m pytest`)
+- **Running scripts**: `uv run python script.py` (not `python script.py`)
+- **Package management**: `uv add package-name` (not `pip install`)
+- **Project execution**: `uv run crewforge` (not direct Python execution)
+- **Development server**: `uv run python -m module` for development servers
+- **Dependency updates**: `uv lock --upgrade` to update uv.lock
+- **Environment info**: `uv show` to display project and environment details
 
 ### Python 3.11+ Best Practices
 - Use pathlib for all file operations instead of os.path for better cross-platform compatibility
@@ -50,6 +65,13 @@ Key project documents (use @ references in prompts):
 - Validate uv installation before project generation attempts
 - Use `uv run` for executing generated project commands in isolated environments
 - Include uv lock files in generated project templates for reproducible builds
+
+### Validation and Testing Standards
+- Comprehensive validation system implemented for CrewAI project specifications
+- Use `SpecificationValidator` for validating LLM-generated project specs
+- Implement completeness scoring (0-1.0) for specification quality assessment
+- Test validation with edge cases: empty fields, invalid formats, missing dependencies
+- Integration tests validate interaction between validation and prompt parsing
 
 ### Jinja2 Templating Guidelines
 - Separate template logic from generation logic - keep templates focused on structure

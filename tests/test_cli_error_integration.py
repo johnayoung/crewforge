@@ -49,12 +49,11 @@ class TestCLIErrorHandlingIntegration:
 
     def test_cli_parameter_validation(self):
         """Test CLI validates parameters properly before calling LLM."""
-        # Test missing prompt - this should actually work now as prompt is optional
+        # Test missing prompt - this should fail with exit code 1
         result = self.runner.invoke(create, ["test-project"])
-        # CLI now handles missing prompt gracefully
-        assert (
-            result.exit_code == 0 or result.exit_code == 2
-        )  # Either works or validation error
+        # CLI should require prompt or interactive mode
+        assert result.exit_code == 1  # Should fail with validation error
+        assert "Please provide a prompt or use --interactive mode" in result.output
 
     def test_cli_handles_basic_functionality(self):
         """Test basic CLI functionality works."""
