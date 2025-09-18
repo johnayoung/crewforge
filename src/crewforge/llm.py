@@ -279,16 +279,47 @@ class LLMClient:
                 ):
                     raise LLMError(f"API request failed: {error_message}")
 
-                # For network errors, retry
-                if (
-                    isinstance(e, (ConnectionError, TimeoutError))
-                    and attempt < self.max_retries
-                ):
+                # Check for retryable errors (server errors, network issues)
+                retryable_errors = [
+                    "internal server error",
+                    "service unavailable",
+                    "server error",
+                    "timeout",
+                    "connection",
+                    "network",
+                    "temporary",
+                    "throttling",
+                ]
+
+                is_retryable = isinstance(e, (ConnectionError, TimeoutError)) or any(
+                    error_term in error_message.lower()
+                    for error_term in retryable_errors
+                )
+
+                # For retryable errors, retry up to max_retries
+                if is_retryable and attempt < self.max_retries:
                     wait_time = 2**attempt  # Exponential backoff
                     await asyncio.sleep(wait_time)
                     continue
 
-                # For other errors, raise immediately
+                # Check for specific API errors that should not retry
+                non_retryable_errors = [
+                    "invalid api key",
+                    "authentication failed",
+                    "unauthorized",
+                    "quota exceeded",
+                    "model not found",
+                    "invalid model",
+                    "permission denied",
+                ]
+
+                if any(
+                    error_term in error_message.lower()
+                    for error_term in non_retryable_errors
+                ):
+                    raise LLMError(f"API request failed: {error_message}")
+
+                # For other errors, raise immediately on first attempt
                 if attempt == 0:
                     raise LLMError(f"LLM request failed: {error_message}")
 
