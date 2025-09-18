@@ -5,9 +5,68 @@ Entry point for the CrewForge CLI tool that generates CrewAI projects
 from natural language prompts.
 """
 
+import signal
+import sys
+from functools import wraps
 import click
 from crewforge import __version__
 from crewforge.progress import ProgressIndicator, StatusDisplay
+
+
+def handle_keyboard_interrupt(signum, frame):
+    """Handle KeyboardInterrupt (Ctrl+C) gracefully."""
+    click.echo("\n\n🛑 Operation cancelled by user", err=True)
+    click.echo("💡 You can restart the project creation at any time.", err=True)
+    sys.exit(130)  # Standard exit code for SIGINT
+
+
+def handle_errors(func):
+    """Decorator to handle common errors gracefully."""
+
+    @wraps(func)  # This preserves the original function's metadata
+    def wrapper(*args, **kwargs):
+        try:
+            # Set up keyboard interrupt handler
+            signal.signal(signal.SIGINT, handle_keyboard_interrupt)
+            return func(*args, **kwargs)
+        except KeyboardInterrupt:
+            handle_keyboard_interrupt(None, None)
+        except PermissionError as e:
+            click.echo(f"\n❌ Permission error: {str(e)}", err=True)
+            click.echo(
+                "💡 Try running with appropriate permissions or check directory access rights.",
+                err=True,
+            )
+            sys.exit(1)
+        except FileNotFoundError as e:
+            click.echo(f"\n❌ File not found: {str(e)}", err=True)
+            click.echo(
+                "💡 Verify the file path and ensure all required files exist.", err=True
+            )
+            sys.exit(1)
+        except OSError as e:
+            error_msg = str(e).lower()
+            click.echo(f"\n❌ System error: {str(e)}", err=True)
+            if "space" in error_msg or "disk" in error_msg:
+                click.echo("💡 Free up disk space and try again.", err=True)
+            elif "permission" in error_msg or "access" in error_msg:
+                click.echo("💡 Check file and directory permissions.", err=True)
+            else:
+                click.echo("💡 Please try again or check system resources.", err=True)
+            sys.exit(1)
+        except Exception as e:
+            click.echo(f"\n💥 Unexpected error occurred: {str(e)}", err=True)
+            click.echo(
+                "💡 Please try again. If the problem persists, check your project description and target directory.",
+                err=True,
+            )
+            click.echo(
+                "🐛 For support, please report this error with the project details you provided.",
+                err=True,
+            )
+            sys.exit(1)
+
+    return wrapper
 
 
 @click.group(invoke_without_command=True)
@@ -51,6 +110,7 @@ def main(ctx):
     help="Directory where the project will be created (default: current directory)",
     type=click.Path(exists=False, file_okay=False, dir_okay=True, path_type=str),
 )
+@handle_errors
 def create(project_name, prompt, interactive, output_dir):
     """
     Create a new CrewAI project from a natural language prompt.
@@ -118,12 +178,15 @@ def create(project_name, prompt, interactive, output_dir):
     if not prompt:
         if interactive:
             status.info("Interactive Mode: Let's build your CrewAI project!")
-            prompt = click.prompt(
-                "Describe the CrewAI project you want to create",
-                type=str,
-                default="",  # Allow empty input
-                show_default=False,
-            )
+            try:
+                prompt = click.prompt(
+                    "Describe the CrewAI project you want to create",
+                    type=str,
+                    default="",  # Allow empty input
+                    show_default=False,
+                )
+            except KeyboardInterrupt:
+                handle_keyboard_interrupt(None, None)
             if not prompt.strip():
                 status.error("Project description cannot be empty")
                 raise click.Abort()
