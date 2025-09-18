@@ -1005,3 +1005,384 @@ class TestDirectoryManagement:
         for input_name, expected in test_cases:
             result = scaffolder.get_safe_project_name(input_name)
             assert result == expected
+
+
+class TestCrewAIErrorHandling:
+    """Test suite for enhanced CrewAI CLI error handling and recovery."""
+
+    def test_categorize_cli_error_network_issues(self):
+        """Test error categorization for network-related CLI failures."""
+        scaffolder = CrewAIScaffolder()
+
+        network_errors = [
+            "ConnectionError: Unable to reach server",
+            "Network timeout occurred",
+            "Failed to resolve hostname",
+            "Connection refused",
+            "SSL certificate verification failed",
+        ]
+
+        for error_msg in network_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=1)
+            assert category["type"] == "network"
+            assert category["retryable"] is True
+            assert "network" in category["user_message"].lower()
+
+    def test_categorize_cli_error_permission_issues(self):
+        """Test error categorization for permission-related CLI failures."""
+        scaffolder = CrewAIScaffolder()
+
+        permission_errors = [
+            "Permission denied",
+            "Access denied",
+            "Insufficient privileges",
+            "Operation not permitted",
+            "You don't have permission",
+        ]
+
+        for error_msg in permission_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=1)
+            assert category["type"] == "permission"
+            assert category["retryable"] is False
+            assert "permission" in category["user_message"].lower()
+
+    def test_categorize_cli_error_disk_space(self):
+        """Test error categorization for disk space issues."""
+        scaffolder = CrewAIScaffolder()
+
+        disk_errors = [
+            "No space left on device",
+            "Disk full",
+            "Not enough free space",
+            "Unable to write file: disk full",
+        ]
+
+        for error_msg in disk_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=1)
+            assert category["type"] == "disk_space"
+            assert category["retryable"] is False
+            assert "disk space" in category["user_message"].lower()
+
+    def test_categorize_cli_error_corrupted_installation(self):
+        """Test error categorization for corrupted CLI installation."""
+        scaffolder = CrewAIScaffolder()
+
+        corruption_errors = [
+            "Command not found: crewai",
+            "ImportError: No module named 'crewai'",
+            "ModuleNotFoundError: crewai",
+            "crewai: command not found",
+            "Python module 'crewai' is corrupted",
+        ]
+
+        for error_msg in corruption_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=127)
+            assert category["type"] == "installation"
+            assert category["retryable"] is False
+            assert "install" in category["user_message"].lower()
+
+    def test_categorize_cli_error_invalid_command(self):
+        """Test error categorization for invalid CLI commands."""
+        scaffolder = CrewAIScaffolder()
+
+        invalid_errors = [
+            "Invalid command: create",
+            "Unknown option: --invalid",
+            "Error: unrecognized arguments",
+            "usage: crewai [-h]",
+            "Invalid project name format",
+        ]
+
+        for error_msg in invalid_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=2)
+            assert category["type"] == "invalid_command"
+            assert category["retryable"] is False
+            assert "command" in category["user_message"].lower()
+
+    def test_categorize_cli_error_transient_failures(self):
+        """Test error categorization for transient failures."""
+        scaffolder = CrewAIScaffolder()
+
+        transient_errors = [
+            "Temporary failure in name resolution",
+            "Resource temporarily unavailable",
+            "Server temporarily unavailable",
+            "Rate limit exceeded, please try again",
+        ]
+
+        for error_msg in transient_errors:
+            category = scaffolder.categorize_cli_error(error_msg, returncode=1)
+            assert category["type"] == "transient"
+            assert category["retryable"] is True
+            assert "try again" in category["user_message"].lower()
+
+    @patch("subprocess.run")
+    @patch("crewforge.scaffolder.CrewAIScaffolder.validate_crewai_dependency")
+    def test_create_crew_with_retry_logic_success_after_retry(
+        self, mock_validate, mock_run
+    ):
+        """Test retry logic succeeds after initial failure."""
+        mock_validate.return_value = {
+            "valid": True,
+            "installed_version": "1.2.3",
+            "meets_minimum": True,
+            "error": None,
+        }
+
+        # First call fails with transient error, second succeeds
+        mock_run.side_effect = [
+            Mock(returncode=1, stderr="Network timeout occurred", stdout=""),
+            Mock(returncode=0, stdout="Project created successfully", stderr=""),
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            target_directory = Path(temp_dir)
+            project_name = "test_project"
+            project_path = target_directory / project_name
+
+            # Create the project directory for the second attempt
+            project_path.mkdir(parents=True)
+
+            result = scaffolder.create_crew_with_retry(
+                project_name, target_directory, max_retries=2
+            )
+
+            assert result["success"] is True
+            assert result["attempts"] == 2
+            assert mock_run.call_count == 2
+
+    @patch("subprocess.run")
+    @patch("crewforge.scaffolder.CrewAIScaffolder.validate_crewai_dependency")
+    def test_create_crew_with_retry_logic_max_retries_exceeded(
+        self, mock_validate, mock_run
+    ):
+        """Test retry logic fails after max retries exceeded."""
+        mock_validate.return_value = {
+            "valid": True,
+            "installed_version": "1.2.3",
+            "meets_minimum": True,
+            "error": None,
+        }
+
+        # Always fail with transient error
+        mock_run.return_value = Mock(
+            returncode=1, stderr="Network timeout occurred", stdout=""
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            target_directory = Path(temp_dir)
+
+            with pytest.raises(CrewAIError) as exc_info:
+                scaffolder.create_crew_with_retry(
+                    "test_project", target_directory, max_retries=2
+                )
+
+            assert "Max retries exceeded" in str(exc_info.value)
+            assert mock_run.call_count == 2
+
+    @patch("subprocess.run")
+    @patch("crewforge.scaffolder.CrewAIScaffolder.validate_crewai_dependency")
+    def test_create_crew_with_retry_logic_non_retryable_error(
+        self, mock_validate, mock_run
+    ):
+        """Test retry logic doesn't retry non-retryable errors."""
+        mock_validate.return_value = {
+            "valid": True,
+            "installed_version": "1.2.3",
+            "meets_minimum": True,
+            "error": None,
+        }
+
+        # Fail with permission error (non-retryable)
+        mock_run.return_value = Mock(
+            returncode=1, stderr="Permission denied: cannot create directory", stdout=""
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            scaffolder = CrewAIScaffolder()
+            target_directory = Path(temp_dir)
+
+            with pytest.raises(CrewAIError) as exc_info:
+                scaffolder.create_crew_with_retry(
+                    "test_project", target_directory, max_retries=3
+                )
+
+            assert "Permission denied" in str(exc_info.value)
+            assert mock_run.call_count == 1  # No retry attempted
+
+    def test_exponential_backoff_timing(self):
+        """Test exponential backoff timing calculation."""
+        scaffolder = CrewAIScaffolder()
+
+        # Test backoff calculation
+        assert scaffolder.calculate_backoff_delay(0) == 1.0  # First retry
+        assert scaffolder.calculate_backoff_delay(1) == 2.0  # Second retry
+        assert scaffolder.calculate_backoff_delay(2) == 4.0  # Third retry
+        assert scaffolder.calculate_backoff_delay(3) == 8.0  # Fourth retry
+
+        # Test max delay cap
+        assert scaffolder.calculate_backoff_delay(10) == 60.0  # Capped at 60 seconds
+
+    @patch("time.sleep")
+    def test_retry_with_backoff_timing(self, mock_sleep):
+        """Test that retry logic uses exponential backoff timing."""
+        scaffolder = CrewAIScaffolder()
+
+        with patch.object(scaffolder, "create_crew") as mock_create:
+            # First call fails, second succeeds
+            mock_create.side_effect = [
+                CrewAIError("Network timeout occurred"),
+                {"success": True, "project_path": Path("/test")},
+            ]
+
+            with patch.object(scaffolder, "categorize_cli_error") as mock_categorize:
+                mock_categorize.return_value = {
+                    "type": "network",
+                    "retryable": True,
+                    "user_message": "Network error occurred",
+                }
+
+                result = scaffolder.create_crew_with_retry(
+                    "test", Path("/tmp"), max_retries=2
+                )
+
+                # Should have slept once between retries
+                mock_sleep.assert_called_once_with(1.0)
+                assert result["success"] is True
+
+    def test_create_detailed_error_report(self):
+        """Test creation of detailed error reports for troubleshooting."""
+        scaffolder = CrewAIScaffolder()
+
+        error_context = {
+            "command": ["crewai", "create", "crew", "test_project"],
+            "stderr": "Permission denied: cannot create directory '/protected'",
+            "stdout": "",
+            "returncode": 1,
+            "cwd": "/tmp",
+            "timeout": 60,
+            "attempt": 1,
+        }
+
+        report = scaffolder.create_error_report(error_context)
+
+        assert "Command" in report
+        assert "crewai create crew test_project" in report
+        assert "Permission denied" in report
+        assert "Return Code: 1" in report
+        assert "Working Directory: /tmp" in report
+        assert "Timeout: 60 seconds" in report
+
+    def test_suggest_recovery_actions_permission_error(self):
+        """Test recovery action suggestions for permission errors."""
+        scaffolder = CrewAIScaffolder()
+
+        error_category = {
+            "type": "permission",
+            "retryable": False,
+            "user_message": "Permission denied error occurred",
+        }
+
+        suggestions = scaffolder.suggest_recovery_actions(
+            error_category, Path("/protected/dir")
+        )
+
+        assert len(suggestions) > 0
+        assert any(
+            "chmod" in suggestion.lower() or "permission" in suggestion.lower()
+            for suggestion in suggestions
+        )
+        assert any(
+            "different" in suggestion.lower() and "directory" in suggestion.lower()
+            for suggestion in suggestions
+        )
+
+    def test_suggest_recovery_actions_installation_error(self):
+        """Test recovery action suggestions for installation errors."""
+        scaffolder = CrewAIScaffolder()
+
+        error_category = {
+            "type": "installation",
+            "retryable": False,
+            "user_message": "CrewAI CLI not found or corrupted",
+        }
+
+        suggestions = scaffolder.suggest_recovery_actions(error_category, Path("/tmp"))
+
+        assert len(suggestions) > 0
+        assert any(
+            "pip install" in suggestion.lower() or "install" in suggestion.lower()
+            for suggestion in suggestions
+        )
+        assert any(
+            "virtual environment" in suggestion.lower() for suggestion in suggestions
+        )
+
+    def test_graceful_degradation_fallback_directory(self):
+        """Test graceful degradation when target directory is inaccessible."""
+        scaffolder = CrewAIScaffolder()
+
+        inaccessible_dir = Path("/root/protected")  # Typically inaccessible
+
+        fallback_result = scaffolder.suggest_fallback_directory(inaccessible_dir)
+
+        assert fallback_result["success"] is True
+        assert fallback_result["fallback_path"] != inaccessible_dir
+        assert (
+            fallback_result["fallback_path"].exists()
+            or fallback_result["fallback_path"].parent.exists()
+        )
+
+    @patch("subprocess.run")
+    def test_cli_health_check(self, mock_run):
+        """Test CLI health check functionality."""
+        scaffolder = CrewAIScaffolder()
+
+        # Mock successful health check
+        mock_run.return_value = Mock(returncode=0, stdout="crewai 1.2.3", stderr="")
+
+        health = scaffolder.perform_cli_health_check()
+
+        assert health["healthy"] is True
+        assert health["version"] is not None
+        assert "issues" not in health or len(health["issues"]) == 0
+
+    @patch("subprocess.run")
+    def test_cli_health_check_with_issues(self, mock_run):
+        """Test CLI health check detects issues."""
+        scaffolder = CrewAIScaffolder()
+
+        # Mock CLI with issues
+        mock_run.side_effect = [
+            Mock(returncode=0, stdout="crewai 0.5.0", stderr=""),  # Version check
+            Mock(
+                returncode=1, stderr="ImportError: missing dependency", stdout=""
+            ),  # Health check
+        ]
+
+        health = scaffolder.perform_cli_health_check()
+
+        assert health["healthy"] is False
+        assert len(health["issues"]) > 0
+        assert any("dependency" in issue.lower() for issue in health["issues"])
+
+    def test_error_context_collection(self):
+        """Test comprehensive error context collection."""
+        scaffolder = CrewAIScaffolder()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = scaffolder.collect_error_context(
+                command=["crewai", "create", "crew", "test"],
+                cwd=temp_dir,
+                error_msg="Test error message",
+                returncode=1,
+            )
+
+            assert "command" in context
+            assert "cwd" in context
+            assert "error_msg" in context
+            assert "returncode" in context
+            assert "timestamp" in context
+            assert "system_info" in context

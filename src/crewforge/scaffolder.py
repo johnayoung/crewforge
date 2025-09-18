@@ -12,6 +12,8 @@ import re
 import os
 import getpass
 import datetime
+import time
+import platform
 from pathlib import Path
 from typing import Dict, Optional, Any, Tuple, List
 import logging
@@ -781,7 +783,9 @@ class CrewAIScaffolder:
         # Ensure target directory exists with proper validation
         dir_result = self.ensure_project_directory(target_directory)
         if not dir_result["success"]:
-            raise CrewAIError(f"Failed to create target directory: {dir_result['error']}")
+            raise CrewAIError(
+                f"Failed to create target directory: {dir_result['error']}"
+            )
 
         # Generate safe project name
         safe_project_name = self.get_safe_project_name(project_name)
@@ -795,7 +799,9 @@ class CrewAIScaffolder:
                 self.logger.warning(f"Project directory {project_path} already exists")
                 backup_result = self.create_backup_directory(project_path)
                 if backup_result["success"]:
-                    self.logger.info(f"Created backup at {backup_result['backup_path']}")
+                    self.logger.info(
+                        f"Created backup at {backup_result['backup_path']}"
+                    )
                 # Clean up existing directory
                 cleanup_result = self.safe_cleanup_directory(project_path)
                 if not cleanup_result["success"]:
@@ -857,7 +863,9 @@ class CrewAIScaffolder:
             if project_path.exists():
                 cleanup_result = self.safe_cleanup_directory(project_path)
                 if not cleanup_result["success"]:
-                    self.logger.error(f"Failed to cleanup after error: {cleanup_result['error']}")
+                    self.logger.error(
+                        f"Failed to cleanup after error: {cleanup_result['error']}"
+                    )
             raise CrewAIError(f"Unexpected error during CrewAI execution: {str(e)}")
 
     def ensure_project_directory(self, project_path: Path) -> Dict[str, Any]:
@@ -1118,3 +1126,440 @@ class CrewAIScaffolder:
             return "untitled_project"
 
         return safe_name
+
+    def categorize_cli_error(
+        self, error_message: str, returncode: int
+    ) -> Dict[str, Any]:
+        """
+        Categorize CrewAI CLI errors for appropriate handling and recovery.
+
+        Args:
+            error_message: Error message from CLI execution
+            returncode: Process return code
+
+        Returns:
+            Dictionary containing error category, retryability, and user message
+        """
+        error_message_lower = error_message.lower()
+
+        # Network-related errors (retryable)
+        if any(
+            keyword in error_message_lower
+            for keyword in [
+                "connection",
+                "network",
+                "timeout",
+                "hostname",
+                "ssl",
+                "certificate",
+                "resolve",
+            ]
+        ):
+            return {
+                "type": "network",
+                "retryable": True,
+                "user_message": "Network connectivity issue detected. Check your internet connection and try again.",
+                "retry_delay": 2.0,
+            }
+
+        # Permission errors (not retryable)
+        if any(
+            keyword in error_message_lower
+            for keyword in [
+                "permission denied",
+                "access denied",
+                "insufficient privileges",
+                "operation not permitted",
+                "you don't have permission",
+            ]
+        ):
+            return {
+                "type": "permission",
+                "retryable": False,
+                "user_message": "Permission denied. Check directory permissions or try a different location.",
+                "retry_delay": 0,
+            }
+
+        # Disk space errors (not retryable)
+        if any(
+            keyword in error_message_lower
+            for keyword in [
+                "no space left",
+                "disk full",
+                "not enough free space",
+                "unable to write",
+            ]
+        ):
+            return {
+                "type": "disk_space",
+                "retryable": False,
+                "user_message": "Insufficient disk space. Free up space and try again.",
+                "retry_delay": 0,
+            }
+
+        # Installation/corruption errors (not retryable)
+        if returncode == 127 or any(
+            keyword in error_message_lower
+            for keyword in [
+                "command not found",
+                "importerror",
+                "modulenotfounderror",
+                "corrupted",
+                "not found",
+            ]
+        ):
+            return {
+                "type": "installation",
+                "retryable": False,
+                "user_message": "CrewAI CLI not found or corrupted. Please reinstall with 'pip install crewai'.",
+                "retry_delay": 0,
+            }
+
+        # Invalid command errors (not retryable)
+        if returncode == 2 or any(
+            keyword in error_message_lower
+            for keyword in [
+                "invalid command",
+                "unknown option",
+                "unrecognized arguments",
+                "usage:",
+                "invalid project name",
+            ]
+        ):
+            return {
+                "type": "invalid_command",
+                "retryable": False,
+                "user_message": "Invalid command or arguments. Check the command syntax.",
+                "retry_delay": 0,
+            }
+
+        # Transient errors (retryable)
+        if any(
+            keyword in error_message_lower
+            for keyword in [
+                "temporary failure",
+                "temporarily unavailable",
+                "rate limit",
+                "try again",
+            ]
+        ):
+            return {
+                "type": "transient",
+                "retryable": True,
+                "user_message": "Temporary service issue. Please try again in a moment.",
+                "retry_delay": 5.0,
+            }
+
+        # Default: unknown error (potentially retryable)
+        return {
+            "type": "unknown",
+            "retryable": True,
+            "user_message": f"Unexpected error occurred: {error_message}",
+            "retry_delay": 1.0,
+        }
+
+    def create_crew_with_retry(
+        self,
+        project_name: str,
+        target_directory: Path,
+        min_version: Optional[str] = None,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Execute crew creation with retry logic and enhanced error handling.
+
+        Args:
+            project_name: Name of the crew project to create
+            target_directory: Directory where the project should be created
+            min_version: Optional minimum CrewAI version requirement
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            Dictionary containing execution results and attempt information
+
+        Raises:
+            CrewAIError: If all retry attempts fail or non-retryable error occurs
+        """
+        last_error = None
+        attempts = 0
+
+        for attempt in range(max_retries):
+            attempts = attempt + 1
+            try:
+                self.logger.info(
+                    f"Attempt {attempts}/{max_retries} to create CrewAI project"
+                )
+
+                # Use the existing create_crew method
+                result = self.create_crew(project_name, target_directory, min_version)
+                result["attempts"] = attempts
+                return result
+
+            except CrewAIError as e:
+                last_error = e
+                error_msg = str(e)
+
+                # Categorize the error
+                error_category = self.categorize_cli_error(
+                    error_msg, getattr(e, "returncode", 1)
+                )
+
+                # Log the error
+                self.logger.warning(
+                    f"Attempt {attempts} failed: {error_category['user_message']}"
+                )
+
+                # If error is not retryable, fail immediately
+                if not error_category["retryable"]:
+                    self.logger.error(
+                        f"Non-retryable error: {error_category['user_message']}"
+                    )
+                    raise CrewAIError(f"{error_category['user_message']}: {error_msg}")
+
+                # If this was the last attempt, fail
+                if attempt == max_retries - 1:
+                    break
+
+                # Wait before retry with exponential backoff
+                retry_delay = self.calculate_backoff_delay(attempt)
+                self.logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+
+        # All retries failed
+        error_context = self.collect_error_context(
+            command=["crewai", "create", "crew", project_name],
+            cwd=str(target_directory),
+            error_msg=str(last_error),
+            returncode=getattr(last_error, "returncode", 1),
+        )
+
+        error_report = self.create_error_report(error_context)
+        self.logger.error(f"Max retries exceeded after {attempts} attempts")
+
+        raise CrewAIError(
+            f"Max retries exceeded ({attempts} attempts). Last error: {last_error}\n\n{error_report}"
+        )
+
+    def calculate_backoff_delay(
+        self, attempt: int, base_delay: float = 1.0, max_delay: float = 60.0
+    ) -> float:
+        """
+        Calculate exponential backoff delay for retry attempts.
+
+        Args:
+            attempt: Current attempt number (0-based)
+            base_delay: Base delay in seconds
+            max_delay: Maximum delay cap in seconds
+
+        Returns:
+            Delay in seconds for the next retry
+        """
+        delay = base_delay * (2**attempt)
+        return min(delay, max_delay)
+
+    def create_error_report(self, error_context: Dict[str, Any]) -> str:
+        """
+        Create a detailed error report for troubleshooting.
+
+        Args:
+            error_context: Context information about the error
+
+        Returns:
+            Formatted error report string
+        """
+        report_lines = [
+            "=== CrewAI CLI Error Report ===",
+            f"Command: {' '.join(error_context.get('command', []))}",
+            f"Working Directory: {error_context.get('cwd', 'N/A')}",
+            f"Return Code: {error_context.get('returncode', 'N/A')}",
+            f"Timeout: {error_context.get('timeout', 60)} seconds",
+            f"Timestamp: {error_context.get('timestamp', 'N/A')}",
+            "",
+            "Error Output:",
+            error_context.get("error_msg", "")
+            or error_context.get("stderr", "No error message available"),
+            "",
+            "System Information:",
+        ]
+
+        system_info = error_context.get("system_info", {})
+        for key, value in system_info.items():
+            report_lines.append(f"  {key}: {value}")
+
+        return "\n".join(report_lines)
+
+    def collect_error_context(
+        self, command: List[str], cwd: str, error_msg: str, returncode: int
+    ) -> Dict[str, Any]:
+        """
+        Collect comprehensive error context for debugging.
+
+        Args:
+            command: Command that failed
+            cwd: Working directory
+            error_msg: Error message
+            returncode: Process return code
+
+        Returns:
+            Dictionary containing error context
+        """
+        return {
+            "command": command,
+            "cwd": cwd,
+            "error_msg": error_msg,
+            "returncode": returncode,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "timeout": 60,
+            "system_info": {
+                "platform": platform.system(),
+                "platform_version": platform.release(),
+                "python_version": platform.python_version(),
+                "architecture": platform.machine(),
+            },
+        }
+
+    def suggest_recovery_actions(
+        self, error_category: Dict[str, Any], target_path: Path
+    ) -> List[str]:
+        """
+        Suggest actionable recovery steps based on error type.
+
+        Args:
+            error_category: Categorized error information
+            target_path: Target directory path
+
+        Returns:
+            List of suggested recovery actions
+        """
+        suggestions = []
+        error_type = error_category["type"]
+
+        if error_type == "permission":
+            suggestions.extend(
+                [
+                    f"Check permissions: chmod 755 {target_path.parent}",
+                    "Try using a different target directory (e.g., ~/projects)",
+                    "Run with elevated privileges if necessary (not recommended)",
+                    "Ensure you have write access to the target location",
+                ]
+            )
+
+        elif error_type == "installation":
+            suggestions.extend(
+                [
+                    "Reinstall CrewAI: pip install --upgrade crewai",
+                    "Create a new virtual environment: python -m venv crewai_env",
+                    "Activate virtual environment and install: source crewai_env/bin/activate && pip install crewai",
+                    "Check Python PATH: python -m site --user-site",
+                ]
+            )
+
+        elif error_type == "disk_space":
+            suggestions.extend(
+                [
+                    f"Free up disk space in {target_path.parent}",
+                    "Use a different drive or directory with more space",
+                    "Clean up temporary files: rm -rf /tmp/*",
+                    "Check disk usage: df -h",
+                ]
+            )
+
+        elif error_type == "network":
+            suggestions.extend(
+                [
+                    "Check internet connectivity",
+                    "Try again in a few minutes",
+                    "Check firewall/proxy settings",
+                    "Use a different network if available",
+                ]
+            )
+
+        else:  # transient, unknown, invalid_command
+            suggestions.extend(
+                [
+                    "Try the command again",
+                    "Check the CrewAI documentation for correct usage",
+                    "Update CrewAI to the latest version: pip install --upgrade crewai",
+                ]
+            )
+
+        return suggestions
+
+    def suggest_fallback_directory(self, original_path: Path) -> Dict[str, Any]:
+        """
+        Suggest fallback directory when original is inaccessible.
+
+        Args:
+            original_path: Original target directory path
+
+        Returns:
+            Dictionary containing fallback suggestion
+        """
+        fallback_candidates = [
+            Path.home() / "crewai_projects",
+            Path.home() / "projects",
+            Path.home() / "Desktop" / "crewai_projects",
+            Path("/tmp") / "crewai_projects",
+        ]
+
+        for candidate in fallback_candidates:
+            try:
+                # Check if we can create the directory
+                candidate.mkdir(parents=True, exist_ok=True)
+                if candidate.exists() and os.access(candidate, os.W_OK):
+                    return {
+                        "success": True,
+                        "fallback_path": candidate,
+                        "reason": f"Original path {original_path} is inaccessible",
+                    }
+            except (OSError, PermissionError):
+                continue
+
+        return {
+            "success": False,
+            "fallback_path": None,
+            "reason": "No suitable fallback directory found",
+        }
+
+    def perform_cli_health_check(self) -> Dict[str, Any]:
+        """
+        Perform comprehensive health check of CrewAI CLI installation.
+
+        Returns:
+            Dictionary containing health status and issues
+        """
+        health_result = {"healthy": True, "version": None, "issues": []}
+
+        try:
+            # Check if CLI is available and get version
+            version = self.get_version()
+            if version:
+                health_result["version"] = version
+            else:
+                health_result["healthy"] = False
+                health_result["issues"].append("CrewAI CLI not found or not responding")
+
+            # Test basic CLI functionality
+            try:
+                result = subprocess.run(
+                    ["crewai", "--help"], capture_output=True, text=True, timeout=10
+                )
+
+                if result.returncode != 0:
+                    health_result["healthy"] = False
+                    health_result["issues"].append(
+                        f"CLI help command failed: {result.stderr}"
+                    )
+
+            except subprocess.TimeoutExpired:
+                health_result["healthy"] = False
+                health_result["issues"].append("CLI commands are timing out")
+            except Exception as e:
+                health_result["healthy"] = False
+                health_result["issues"].append(f"CLI execution error: {str(e)}")
+
+        except Exception as e:
+            health_result["healthy"] = False
+            health_result["issues"].append(f"Health check failed: {str(e)}")
+
+        return health_result
