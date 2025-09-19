@@ -16,6 +16,7 @@ from crewforge.progress import ProgressIndicator, StatusDisplay
 from crewforge.llm import LLMClient, LLMError
 from crewforge.prompt_templates import PromptTemplates, PromptTemplateError
 from crewforge.scaffolder import CrewAIScaffolder, CrewAIError
+from crewforge.orchestrator import WorkflowOrchestrator, WorkflowContext, WorkflowError
 
 
 def handle_keyboard_interrupt(signum, frame):
@@ -204,99 +205,41 @@ def create(project_name, prompt, interactive, output_dir):
     click.echo(f"📝 Project prompt: {click.style(prompt, fg='green')}")
     click.echo(f"📂 Output directory: {click.style(output_dir, fg='cyan')}")
 
-    # Start project generation with progress indicators
-    progress.start_progress(f"Generating CrewAI project '{project_name}'")
+    # Create workflow context
+    context = WorkflowContext(
+        user_prompt=prompt,
+        project_name=project_name,
+        output_dir=Path(output_dir),
+        llm_provider="openai",  # Default provider
+        llm_model="gpt-3.5-turbo"  # Default model
+    )
 
-    # Step 1: Parse prompt
-    progress.update_progress("Parsing natural language prompt", 0)
-    status.info("Analyzing project requirements from your description...")
+    # Initialize orchestrator
+    orchestrator = WorkflowOrchestrator()
 
-    # Initialize LLM client and prompt templates
     try:
-        llm_client = LLMClient(provider="openai", model="gpt-3.5-turbo")
-        prompt_templates = PromptTemplates(llm_client=llm_client)
+        # Execute the complete workflow
+        result_context = asyncio.run(orchestrator.execute_workflow(context))
 
-        # Extract project specification from prompt
-        project_spec = asyncio.run(prompt_templates.extract_project_spec(prompt))
-        status.success(
-            f"Extracted {len(project_spec['agents'])} agents and {len(project_spec['tasks'])} tasks"
-        )
+        # Display workflow summary
+        summary = orchestrator.get_workflow_summary(result_context)
+        click.echo(f"\n� Workflow Summary:")
+        click.echo(f"  • Total steps: {summary['total_steps']}")
+        click.echo(f"  • Completed: {summary['completed_steps']}")
+        click.echo(f"  • Failed: {summary['failed_steps']}")
+        click.echo(f"  • Duration: {summary['total_time_seconds']:.2f}s")
 
-        # Display what was extracted for user validation
-        click.echo(f"\n📋 Extracted Project Specification:")
-        click.echo(
-            f"  • Project: {click.style(project_spec['project_name'], fg='blue', bold=True)}"
-        )
-        click.echo(f"  • Description: {project_spec['project_description']}")
-        click.echo(
-            f"  • Agents: {', '.join([agent['role'] for agent in project_spec['agents']])}"
-        )
-        click.echo(f"  • Tasks: {len(project_spec['tasks'])} tasks defined")
-        click.echo(f"  • Dependencies: {', '.join(project_spec['dependencies'])}")
+        if summary['success']:
+            status.success("CrewAI project created successfully!")
 
-    except (LLMError, PromptTemplateError) as e:
-        # For demo purposes, show that we're analyzing but API is not configured
-        status.info("LLM API not configured - showing simulated analysis for demo:")
-        click.echo(f"\n📋 Project Analysis (Simulated):")
-        click.echo(f"  • Project: {click.style(project_name, fg='blue', bold=True)}")
-        click.echo(f"  • Description: {prompt}")
-        click.echo(
-            f"  • Status: Prompt template system ready, awaiting API configuration"
-        )
-        status.info(
-            "To enable full prompt parsing, configure your OpenAI API key in OPENAI_API_KEY environment variable"
-        )
-    except Exception as e:
-        status.error(f"Unexpected error during prompt parsing: {str(e)}")
-        raise click.Abort()
-
-    # Step 2: Validate requirements
-    progress.update_progress("Validating project requirements", 1)
-    status.info("Validating project specifications and requirements...")
-
-    # Step 3: Plan structure
-    progress.update_progress("Planning project structure", 2)
-    status.info("Designing optimal project architecture...")
-
-    # Step 4: Prepare configuration
-    progress.update_progress("Preparing CrewAI configuration", 3)
-    status.info("Preparing intelligent agent configurations...")
-
-    # Step 5: Setup files
-    progress.update_progress("Setting up project files", 4)
-    status.info("Creating project files and dependencies...")
-
-    # Initialize CrewAI scaffolder
-    scaffolder = CrewAIScaffolder()
-
-    # Check if CrewAI CLI is available
-    if not scaffolder.check_crewai_available():
-        status.info(
-            "CrewAI CLI not found - showing scaffolding system integration for demo:"
-        )
-        click.echo(f"\n🔧 Scaffolding System Ready:")
-        click.echo(f"  • Subprocess execution for 'crewai create crew <name>' command")
-        click.echo(f"  • Command validation and error handling")
-        click.echo(f"  • Directory management and path validation")
-        click.echo(f"  • Timeout handling and process management")
-
-        status.info(
-            "To enable full project scaffolding, install CrewAI CLI with: pip install crewai"
-        )
-    else:
-        # Use CrewAI CLI to create the actual project structure
-        try:
-            output_path = Path(output_dir)
-            result = scaffolder.create_crew(project_name, output_path)
-
-            if result["success"]:
-                status.success(f"CrewAI project structure created successfully!")
+            if result_context.scaffold_result and result_context.scaffold_result["success"]:
+                project_path = result_context.scaffold_result["project_path"]
                 click.echo(
-                    f"\n📁 Project created at: {click.style(str(result['project_path']), fg='cyan', bold=True)}"
+                    f"\n📁 Project created at: {click.style(str(project_path), fg='cyan', bold=True)}"
                 )
 
-                # Show what was created by CrewAI CLI
-                project_files = list(result["project_path"].rglob("*"))
+                # Show what was created
+                project_files = list(project_path.rglob("*"))
                 click.echo(
                     f"📝 Generated {len([f for f in project_files if f.is_file()])} files:"
                 )
@@ -313,49 +256,33 @@ def create(project_name, prompt, interactive, output_dir):
                 ]
 
                 for file_path in key_files:
-                    full_path = result["project_path"] / file_path
+                    full_path = project_path / file_path
                     if full_path.exists():
                         click.echo(f"  ✅ {file_path}")
                     else:
                         click.echo(f"  📄 {file_path}")
 
-                return 0
-            else:
-                status.error("Failed to create CrewAI project structure")
-                progress.finish_progress(f"CrewAI project '{project_name}' failed!")
-                raise click.Abort()
+        else:
+            status.error("Workflow completed with errors")
+            # Show failed steps
+            for step in result_context.steps:
+                if step.status == "failed":
+                    click.echo(f"  ❌ {step.name}: {step.error}")
 
-        except CrewAIError as e:
-            status.error(f"CrewAI scaffolding failed: {str(e)}")
-            # Fall through to demo mode
-            click.echo(f"\n🔧 Scaffolding System Integration Complete (Demo Mode)")
+        return 0
 
-    # Complete the process
-    progress.finish_progress(f"CrewAI project '{project_name}' ready!")
+    except WorkflowError as e:
+        status.error(f"Workflow failed: {str(e)}")
+        if e.context:
+            # Show which step failed
+            failed_steps = [s for s in e.context.steps if s.status == "failed"]
+            if failed_steps:
+                click.echo(f"Failed at step: {failed_steps[-1].name}")
+        raise click.Abort()
 
-    # Show what was created
-    status.success("CrewAI scaffolding system integrated successfully!")
-    click.echo("\n📦 CrewForge now includes:")
-    click.echo("  • Prompt template extraction system")
-    click.echo("  • Structured project specification parsing")
-    click.echo("  • LLM integration with multiple providers")
-    click.echo("  • JSON schema validation for specifications")
-    click.echo("  • Native CrewAI CLI integration and subprocess execution")
-
-    status.info("Current milestone progress:")
-    click.echo(
-        "  ✅ Design prompt templates for extracting CrewAI project requirements"
-    )
-    click.echo(
-        "  ✅ Implement subprocess execution for 'crewai create crew <name>' command"
-    )
-    click.echo("  • Next: Add CrewAI CLI dependency validation and version checking")
-    click.echo(
-        "  • Next: Handle LLM provider selection and API key configuration workflow"
-    )
-    click.echo("  • Next: Manage project directory creation and file system operations")
-
-    return 0
+    except Exception as e:
+        status.error(f"Unexpected error: {str(e)}")
+        raise click.Abort()
 
 
 if __name__ == "__main__":
