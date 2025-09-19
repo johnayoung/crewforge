@@ -40,9 +40,9 @@ class TestValidationCaching:
     def test_cache_initialization(self, cache):
         """Test that cache initializes properly."""
         assert cache is not None
-        assert hasattr(cache, 'get')
-        assert hasattr(cache, 'set')
-        assert hasattr(cache, 'clear')
+        assert hasattr(cache, "get")
+        assert hasattr(cache, "set")
+        assert hasattr(cache, "clear")
 
     def test_cache_key_generation(self, cache, temp_project_dir):
         """Test cache key generation based on file path and content."""
@@ -107,7 +107,7 @@ class TestValidationCaching:
         result1 = validate_python_syntax(test_file)
 
         # Second validation should use cache
-        with patch('crewforge.validation.ValidationCache.get') as mock_get:
+        with patch("crewforge.validation.ValidationCache.get") as mock_get:
             mock_get.return_value = result1
             result2 = validate_python_syntax(test_file)
             assert result2 == result1
@@ -121,7 +121,7 @@ class TestValidationCaching:
         result1 = validate_python_imports(test_file, str(temp_project_dir))
 
         # Second validation should use cache
-        with patch('crewforge.validation.ValidationCache.get') as mock_get:
+        with patch("crewforge.validation.ValidationCache.get") as mock_get:
             mock_get.return_value = result1
             result2 = validate_python_imports(test_file, str(temp_project_dir))
             assert result2 == result1

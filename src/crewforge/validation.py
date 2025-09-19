@@ -174,8 +174,8 @@ class ValidationCache:
 
             # Generate content hash for small files, or use size + mtime for large files
             if size < 1024 * 1024:  # 1MB limit
-                content = file_path_obj.read_text(encoding='utf-8', errors='ignore')
-                content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+                content = file_path_obj.read_text(encoding="utf-8", errors="ignore")
+                content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
             else:
                 content_hash = f"large:{size}"
 
@@ -218,7 +218,7 @@ class ValidationCache:
             # Implement LRU eviction if cache is full
             if len(self._cache) >= self._max_size:
                 # Remove oldest entries (simple FIFO)
-                oldest_keys = list(self._cache.keys())[:self._max_size // 4]
+                oldest_keys = list(self._cache.keys())[: self._max_size // 4]
                 for key in oldest_keys:
                     del self._cache[key]
                     if key in self._metadata:
@@ -226,8 +226,8 @@ class ValidationCache:
 
             self._cache[cache_key] = result
             self._metadata[cache_key] = {
-                'timestamp': time.time(),
-                'file_path': file_path
+                "timestamp": time.time(),
+                "file_path": file_path,
             }
 
     def clear(self) -> None:
