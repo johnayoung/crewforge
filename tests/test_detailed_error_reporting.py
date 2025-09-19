@@ -40,15 +40,15 @@ class TestDetailedErrorReporting:
             suggestions=[
                 "Check for missing colons after function definitions",
                 "Verify indentation is consistent (use 4 spaces)",
-                "Ensure all parentheses and brackets are properly closed"
+                "Ensure all parentheses and brackets are properly closed",
             ],
             context={
                 "line_number": 10,
                 "column": 15,
                 "error_type": "SyntaxError",
-                "code_snippet": "def hello_world(\n    print('Hello')"
+                "code_snippet": "def hello_world(\n    print('Hello')",
             },
-            error_code="PY001"
+            error_code="PY001",
         )
 
         assert issue.severity == IssueSeverity.ERROR
@@ -64,7 +64,7 @@ class TestDetailedErrorReporting:
             message="Import error: module not found",
             field_path="test_file.py",
             suggestions=["Install missing package: pip install requests"],
-            error_code="IMP001"
+            error_code="IMP001",
         )
 
         str_repr = str(issue)
@@ -96,10 +96,13 @@ class TestDetailedErrorReporting:
         assert "Syntax error" in error.message
 
         # Check for detailed context and suggestions
-        if hasattr(error, 'suggestions') and error.suggestions:
+        if hasattr(error, "suggestions") and error.suggestions:
             assert len(error.suggestions) > 0
-            assert any("parentheses" in suggestion.lower() or "indentation" in suggestion.lower()
-                      for suggestion in error.suggestions)
+            assert any(
+                "parentheses" in suggestion.lower()
+                or "indentation" in suggestion.lower()
+                for suggestion in error.suggestions
+            )
 
     def test_detailed_import_error_reporting(self, temp_project_dir):
         """Test detailed reporting for import errors."""
@@ -125,10 +128,12 @@ class TestDetailedErrorReporting:
 
         # Check that errors include suggestions
         for error in result.errors:
-            if hasattr(error, 'suggestions') and error.suggestions:
+            if hasattr(error, "suggestions") and error.suggestions:
                 assert len(error.suggestions) > 0
-                assert any("pip install" in suggestion or "package" in suggestion.lower()
-                          for suggestion in error.suggestions)
+                assert any(
+                    "pip install" in suggestion or "package" in suggestion.lower()
+                    for suggestion in error.suggestions
+                )
 
     def test_generate_detailed_error_report(self, temp_project_dir):
         """Test generation of detailed error reports."""
@@ -165,15 +170,15 @@ class TestDetailedErrorReporting:
                 message="Critical syntax error",
                 field_path="main.py",
                 suggestions=["Fix the syntax error on line 5"],
-                error_code="PY001"
+                error_code="PY001",
             ),
             ValidationIssue(
                 severity=IssueSeverity.WARNING,
                 message="Unused import",
                 field_path="crew.py",
                 suggestions=["Remove unused import or use it"],
-                error_code="IMP002"
-            )
+                error_code="IMP002",
+            ),
         ]
 
         result = ValidationResult(issues=issues)
@@ -195,12 +200,12 @@ class TestDetailedErrorReporting:
                 severity=IssueSeverity.ERROR,
                 message="Test error",
                 field_path="test.py",
-                error_code="TEST001"
+                error_code="TEST001",
             )
         ]
 
         for issue in issues:
-            if hasattr(issue, 'error_code') and issue.error_code:
+            if hasattr(issue, "error_code") and issue.error_code:
                 # Error codes should follow pattern: CATEGORY + 3 digits
                 assert len(issue.error_code) >= 3
                 assert issue.error_code[:3].isalpha()
@@ -213,7 +218,7 @@ class TestDetailedErrorReporting:
             "column": 10,
             "function_name": "test_function",
             "code_snippet": "if x = 5:",
-            "error_type": "SyntaxError"
+            "error_type": "SyntaxError",
         }
 
         issue = ValidationIssue(
@@ -221,7 +226,7 @@ class TestDetailedErrorReporting:
             message="Assignment in condition",
             field_path="test.py",
             context=context,
-            error_code="PY002"
+            error_code="PY002",
         )
 
         assert issue.context == context

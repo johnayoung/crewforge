@@ -58,21 +58,23 @@ class ValidationIssue:
 
     def __str__(self) -> str:
         """String representation of validation issue with detailed information."""
-        lines = [f"{self.severity.value.upper()}: {self.message} (at {self.field_path})"]
-        
+        lines = [
+            f"{self.severity.value.upper()}: {self.message} (at {self.field_path})"
+        ]
+
         if self.error_code:
             lines.append(f"Error Code: {self.error_code}")
-        
+
         if self.context:
             lines.append("Context:")
             for key, value in self.context.items():
                 lines.append(f"  {key}: {value}")
-        
+
         if self.suggestions:
             lines.append("Suggestions:")
             for suggestion in self.suggestions:
                 lines.append(f"  - {suggestion}")
-        
+
         return "\n".join(lines)
 
 
@@ -1018,14 +1020,14 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                         "Use consistent indentation (4 spaces recommended)",
                         "Check for mixed tabs and spaces",
                         "Ensure all code blocks are properly indented",
-                        f"Look at line {e.lineno} and surrounding lines for indentation issues"
+                        f"Look at line {e.lineno} and surrounding lines for indentation issues",
                     ],
                     context={
                         "line_number": e.lineno,
                         "error_type": "IndentationError",
-                        "message": e.msg
+                        "message": e.msg,
                     },
-                    error_code="PY001"
+                    error_code="PY001",
                 )
             )
         except SyntaxError as e:
@@ -1039,16 +1041,20 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                         "Verify parentheses and brackets are properly matched",
                         "Ensure string literals are properly quoted",
                         f"Review line {e.lineno} for syntax issues",
-                        "Use python -m py_compile to check syntax"
+                        "Use python -m py_compile to check syntax",
                     ],
                     context={
                         "line_number": e.lineno,
-                        "column": getattr(e, 'offset', None),
+                        "column": getattr(e, "offset", None),
                         "error_type": "SyntaxError",
                         "message": e.msg,
-                        "text": getattr(e, 'text', '').strip() if hasattr(e, 'text') else None
+                        "text": (
+                            getattr(e, "text", "").strip()
+                            if hasattr(e, "text")
+                            else None
+                        ),
                     },
-                    error_code="PY002"
+                    error_code="PY002",
                 )
             )
         except Exception as e:
@@ -1155,13 +1161,13 @@ def validate_python_imports(
                                 "Convert to absolute imports when possible",
                                 "Ensure the relative path is correct",
                                 "Check if the module is in the same package",
-                                "Use absolute imports for better maintainability"
+                                "Use absolute imports for better maintainability",
                             ],
                             context={
                                 "import_name": import_name,
-                                "import_type": "relative"
+                                "import_type": "relative",
                             },
-                            error_code="IMP001"
+                            error_code="IMP001",
                         )
                     )
                 else:
@@ -1175,14 +1181,14 @@ def validate_python_imports(
                                 f"Check if {import_name.split('.')[0]} is in requirements.txt",
                                 "Verify the package name is spelled correctly",
                                 "Check if the module is in your project directory",
-                                f"Try: python -c 'import {import_name.split('.')[0]}'"
+                                f"Try: python -c 'import {import_name.split('.')[0]}'",
                             ],
                             context={
                                 "import_name": import_name,
-                                "package_name": import_name.split('.')[0],
-                                "import_type": "absolute"
+                                "package_name": import_name.split(".")[0],
+                                "import_type": "absolute",
                             },
-                            error_code="IMP002"
+                            error_code="IMP002",
                         )
                     )
 
@@ -2468,93 +2474,109 @@ def generate_detailed_error_report(
     ]
 
     if validation_result.errors:
-        report_lines.extend([
-            "🚨 CRITICAL ERRORS (Must Fix)",
-            "-" * 40,
-        ])
-        
+        report_lines.extend(
+            [
+                "🚨 CRITICAL ERRORS (Must Fix)",
+                "-" * 40,
+            ]
+        )
+
         for i, error in enumerate(validation_result.errors, 1):
-            report_lines.extend([
-                f"{i}. {error.message}",
-                f"   Location: {error.field_path}",
-            ])
-            
+            report_lines.extend(
+                [
+                    f"{i}. {error.message}",
+                    f"   Location: {error.field_path}",
+                ]
+            )
+
             if error.error_code:
                 report_lines.append(f"   Error Code: {error.error_code}")
-            
+
             if error.context:
                 report_lines.append("   Context:")
                 for key, value in error.context.items():
                     report_lines.append(f"     {key}: {value}")
-            
+
             if error.suggestions:
                 report_lines.append("   🔧 Suggested Fixes:")
                 for suggestion in error.suggestions:
                     report_lines.append(f"     • {suggestion}")
-            
+
             report_lines.append("")
 
     if validation_result.warnings:
-        report_lines.extend([
-            "⚠️  WARNINGS (Should Review)",
-            "-" * 40,
-        ])
-        
+        report_lines.extend(
+            [
+                "⚠️  WARNINGS (Should Review)",
+                "-" * 40,
+            ]
+        )
+
         for i, warning in enumerate(validation_result.warnings, 1):
-            report_lines.extend([
-                f"{i}. {warning.message}",
-                f"   Location: {warning.field_path}",
-            ])
-            
+            report_lines.extend(
+                [
+                    f"{i}. {warning.message}",
+                    f"   Location: {warning.field_path}",
+                ]
+            )
+
             if warning.suggestions:
                 report_lines.append("   💡 Suggestions:")
                 for suggestion in warning.suggestions:
                     report_lines.append(f"     • {suggestion}")
-            
+
             report_lines.append("")
 
     if validation_result.info_messages:
-        report_lines.extend([
-            "ℹ️  INFORMATION",
-            "-" * 40,
-        ])
-        
+        report_lines.extend(
+            [
+                "ℹ️  INFORMATION",
+                "-" * 40,
+            ]
+        )
+
         for info in validation_result.info_messages:
             report_lines.append(f"• {info.message}")
 
     # Add debugging guidance section
-    report_lines.extend([
-        "",
-        "=" * 60,
-        "DEBUGGING GUIDANCE",
-        "=" * 60,
-    ])
+    report_lines.extend(
+        [
+            "",
+            "=" * 60,
+            "DEBUGGING GUIDANCE",
+            "=" * 60,
+        ]
+    )
 
     if validation_result.errors:
-        report_lines.extend([
-            "🔍 Common Debugging Steps:",
-            "1. Check Python syntax: python -m py_compile <file>",
-            "2. Verify imports: python -c 'import <module>'",
-            "3. Test configuration: python -c 'import yaml; yaml.safe_load(open(\"config/agents.yaml\"))'",
-            "4. Run workflow: python src/<project>/main.py",
-            "",
-            "📚 Useful Commands:",
-            f"• cd {project_root}",
-            "• python -m venv venv && source venv/bin/activate",
-            "• pip install -r requirements.txt (if exists)",
-            "• python src/*/main.py",
-            "",
-            "🐛 If issues persist:",
-            "• Check Python version: python --version",
-            "• Verify CrewAI installation: pip show crewai",
-            "• Test basic CrewAI: python -c 'from crewai import Agent; print(\"CrewAI OK\")'",
-        ])
+        report_lines.extend(
+            [
+                "🔍 Common Debugging Steps:",
+                "1. Check Python syntax: python -m py_compile <file>",
+                "2. Verify imports: python -c 'import <module>'",
+                "3. Test configuration: python -c 'import yaml; yaml.safe_load(open(\"config/agents.yaml\"))'",
+                "4. Run workflow: python src/<project>/main.py",
+                "",
+                "📚 Useful Commands:",
+                f"• cd {project_root}",
+                "• python -m venv venv && source venv/bin/activate",
+                "• pip install -r requirements.txt (if exists)",
+                "• python src/*/main.py",
+                "",
+                "🐛 If issues persist:",
+                "• Check Python version: python --version",
+                "• Verify CrewAI installation: pip show crewai",
+                "• Test basic CrewAI: python -c 'from crewai import Agent; print(\"CrewAI OK\")'",
+            ]
+        )
     else:
-        report_lines.extend([
-            "✅ No critical errors found!",
-            "Your project should be ready to run.",
-            "",
-            f"Try: cd {project_root} && python src/*/*/main.py"
-        ])
+        report_lines.extend(
+            [
+                "✅ No critical errors found!",
+                "Your project should be ready to run.",
+                "",
+                f"Try: cd {project_root} && python src/*/*/main.py",
+            ]
+        )
 
     return "\n".join(report_lines)
