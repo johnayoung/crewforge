@@ -1427,8 +1427,11 @@ def validate_generated_project(project_root: str) -> ValidationResult:
                     )
                 )
             else:
-                # Check for configuration files
+                # Check for configuration files and validate their content
                 config_files = ["agents.yaml", "tasks.yaml"]
+                agents_file = None
+                tasks_file = None
+
                 for config_file in config_files:
                     config_path = config_dir / config_file
                     if not config_path.exists():
@@ -1447,6 +1450,74 @@ def validate_generated_project(project_root: str) -> ValidationResult:
                                 str(config_path),
                             )
                         )
+
+                        # Store file paths for validation
+                        if config_file == "agents.yaml":
+                            agents_file = config_path
+                        elif config_file == "tasks.yaml":
+                            tasks_file = config_path
+
+                # Validate configuration files if they exist
+                if agents_file:
+                    agents_result = validate_crewai_agents_config(agents_file)
+                    all_issues.extend(agents_result.issues)
+
+                if tasks_file:
+                    tasks_result = validate_crewai_tasks_config(tasks_file)
+                    all_issues.extend(tasks_result.issues)
+
+                # Validate consistency between agents and tasks if both exist
+                if agents_file and tasks_file:
+                    try:
+                        # Load both configurations for consistency checking even if individual validations failed
+                        import yaml
+
+                        agents_content = agents_file.read_text(encoding="utf-8")
+                        tasks_content = tasks_file.read_text(encoding="utf-8")
+
+                        try:
+                            agents_config = yaml.safe_load(agents_content)
+                            tasks_config = yaml.safe_load(tasks_content)
+
+                            # Check agent references even if agents have validation errors
+                            if isinstance(agents_config, dict) and isinstance(
+                                tasks_config, dict
+                            ):
+                                available_agents = list(agents_config.keys())
+                                consistency_errors_found = False
+
+                                # Check that all task agents reference valid agents
+                                for task_name, task_config in tasks_config.items():
+                                    if (
+                                        isinstance(task_config, dict)
+                                        and "agent" in task_config
+                                    ):
+                                        referenced_agent = task_config["agent"]
+                                        if referenced_agent not in available_agents:
+                                            all_issues.append(
+                                                ValidationIssue(
+                                                    IssueSeverity.ERROR,
+                                                    f"Task '{task_name}' references unknown agent '{referenced_agent}'. Available agents: {', '.join(available_agents)}",
+                                                    f"{tasks_file}[{task_name}].agent",
+                                                )
+                                            )
+                                            consistency_errors_found = True
+
+                                # Add success message if no consistency errors
+                                if not consistency_errors_found:
+                                    all_issues.append(
+                                        ValidationIssue(
+                                            IssueSeverity.INFO,
+                                            f"Configuration consistency validated: {len(available_agents)} agents, {len(tasks_config)} tasks",
+                                            f"{agents_file} + {tasks_file}",
+                                        )
+                                    )
+                        except yaml.YAMLError:
+                            # If YAML parsing fails, individual validations already reported this
+                            pass
+                    except Exception:
+                        # If consistency validation fails for other reasons, continue without it
+                        pass
 
     # 4. Check for other important project files
     important_files = ["pyproject.toml", "README.md", ".env"]
@@ -1470,3 +1541,632 @@ def validate_generated_project(project_root: str) -> ValidationResult:
             )
 
     return ValidationResult(issues=all_issues)
+
+
+# CrewAI Configuration File Validation Functions
+
+
+def validate_crewai_agents_config(file_path: Union[str, Path]) -> ValidationResult:
+    """
+    Validate CrewAI agents.yaml configuration file.
+
+    Args:
+        file_path: Path to agents.yaml file
+
+    Returns:
+        ValidationResult with validation issues
+    """
+    import yaml
+
+    file_path = Path(file_path)
+    issues: List[ValidationIssue] = []
+
+    # Check if file exists
+    if not file_path.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Agents configuration file not found: {file_path}",
+                str(file_path),
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    try:
+        # Read and parse YAML
+        content = file_path.read_text(encoding="utf-8")
+
+        if not content.strip():
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Empty agents configuration file: {file_path.name}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        try:
+            agents_config = yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Invalid YAML syntax in {file_path.name}: {str(e)}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Validate config structure
+        if not isinstance(agents_config, dict):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agents configuration must be a dictionary, got {type(agents_config).__name__}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        if not agents_config:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agents configuration is empty",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Validate each agent
+        for agent_name, agent_config in agents_config.items():
+            agent_path = f"{file_path}[{agent_name}]"
+            _validate_single_agent_config(agent_config, agent_name, agent_path, issues)
+
+        # Success message
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.INFO,
+                f"Agents configuration is valid with {len(agents_config)} agents",
+                str(file_path),
+            )
+        )
+
+    except UnicodeDecodeError as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Encoding error in {file_path.name}: Cannot decode file as UTF-8",
+                str(file_path),
+            )
+        )
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Error reading {file_path.name}: {str(e)}",
+                str(file_path),
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def validate_crewai_tasks_config(
+    file_path: Union[str, Path], available_agents: Optional[List[str]] = None
+) -> ValidationResult:
+    """
+    Validate CrewAI tasks.yaml configuration file.
+
+    Args:
+        file_path: Path to tasks.yaml file
+        available_agents: Optional list of valid agent names for validation
+
+    Returns:
+        ValidationResult with validation issues
+    """
+    import yaml
+
+    file_path = Path(file_path)
+    issues: List[ValidationIssue] = []
+
+    # Check if file exists
+    if not file_path.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Tasks configuration file not found: {file_path}",
+                str(file_path),
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    try:
+        # Read and parse YAML
+        content = file_path.read_text(encoding="utf-8")
+
+        if not content.strip():
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Empty tasks configuration file: {file_path.name}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        try:
+            tasks_config = yaml.safe_load(content)
+        except yaml.YAMLError as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Invalid YAML syntax in {file_path.name}: {str(e)}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Validate config structure
+        if not isinstance(tasks_config, dict):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Tasks configuration must be a dictionary, got {type(tasks_config).__name__}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        if not tasks_config:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR, f"Tasks configuration is empty", str(file_path)
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Validate each task
+        task_names = list(tasks_config.keys())
+        for task_name, task_config in tasks_config.items():
+            task_path = f"{file_path}[{task_name}]"
+            _validate_single_task_config(
+                task_config, task_name, task_path, issues, available_agents, task_names
+            )
+
+        # Check for circular dependencies
+        _validate_task_dependencies(tasks_config, str(file_path), issues)
+
+        # Success message
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.INFO,
+                f"Tasks configuration is valid with {len(tasks_config)} tasks",
+                str(file_path),
+            )
+        )
+
+    except UnicodeDecodeError as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Encoding error in {file_path.name}: Cannot decode file as UTF-8",
+                str(file_path),
+            )
+        )
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Error reading {file_path.name}: {str(e)}",
+                str(file_path),
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def validate_crewai_config_consistency(
+    agents_file: Union[str, Path], tasks_file: Union[str, Path]
+) -> ValidationResult:
+    """
+    Validate consistency between agents.yaml and tasks.yaml files.
+
+    Args:
+        agents_file: Path to agents.yaml file
+        tasks_file: Path to tasks.yaml file
+
+    Returns:
+        ValidationResult with consistency validation issues
+    """
+    import yaml
+
+    agents_file = Path(agents_file)
+    tasks_file = Path(tasks_file)
+    issues: List[ValidationIssue] = []
+
+    # First validate individual files
+    agents_result = validate_crewai_agents_config(agents_file)
+    tasks_result = validate_crewai_tasks_config(tasks_file)
+
+    # Combine issues from individual validations
+    issues.extend(agents_result.issues)
+    issues.extend(tasks_result.issues)
+
+    # If individual validations failed, don't proceed with consistency checks
+    if not agents_result.is_valid or not tasks_result.is_valid:
+        return ValidationResult(issues=issues)
+
+    try:
+        # Load both configurations
+        agents_content = agents_file.read_text(encoding="utf-8")
+        tasks_content = tasks_file.read_text(encoding="utf-8")
+
+        agents_config = yaml.safe_load(agents_content)
+        tasks_config = yaml.safe_load(tasks_content)
+
+        # Get list of available agents
+        available_agents = list(agents_config.keys())
+
+        # Check that all task agents reference valid agents
+        for task_name, task_config in tasks_config.items():
+            if isinstance(task_config, dict) and "agent" in task_config:
+                referenced_agent = task_config["agent"]
+                if referenced_agent not in available_agents:
+                    issues.append(
+                        ValidationIssue(
+                            IssueSeverity.ERROR,
+                            f"Task '{task_name}' references unknown agent '{referenced_agent}'. Available agents: {', '.join(available_agents)}",
+                            f"{tasks_file}[{task_name}].agent",
+                        )
+                    )
+
+        # Check for unused agents (warning)
+        used_agents = set()
+        for task_config in tasks_config.values():
+            if isinstance(task_config, dict) and "agent" in task_config:
+                used_agents.add(task_config["agent"])
+
+        unused_agents = set(available_agents) - used_agents
+        for unused_agent in unused_agents:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{unused_agent}' is defined but not used by any tasks",
+                    f"{agents_file}[{unused_agent}]",
+                )
+            )
+
+        # Success message if no consistency errors found
+        consistency_errors = [
+            issue
+            for issue in issues
+            if issue.severity == IssueSeverity.ERROR
+            and "consistency" in issue.message.lower()
+        ]
+        if not consistency_errors:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"Configuration consistency validated: {len(available_agents)} agents, {len(tasks_config)} tasks",
+                    f"{agents_file} + {tasks_file}",
+                )
+            )
+
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Error validating configuration consistency: {str(e)}",
+                f"{agents_file} + {tasks_file}",
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def _validate_single_agent_config(
+    agent_config: Any, agent_name: str, agent_path: str, issues: List[ValidationIssue]
+) -> None:
+    """Helper function to validate a single agent configuration."""
+
+    # Required fields for agents
+    required_fields = {"role", "goal", "backstory", "tools"}
+
+    if not isinstance(agent_config, dict):
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Agent '{agent_name}' must be a dictionary, got {type(agent_config).__name__}",
+                agent_path,
+            )
+        )
+        return
+
+    # Check required fields
+    for field in required_fields:
+        if field not in agent_config:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' is missing required field: {field}",
+                    f"{agent_path}.{field}",
+                )
+            )
+
+    # Validate field types and content
+    if "role" in agent_config:
+        role = agent_config["role"]
+        if not isinstance(role, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' role must be a string, got {type(role).__name__}",
+                    f"{agent_path}.role",
+                )
+            )
+        elif role.lower().strip() in {"agent", "assistant", "helper", "bot", "ai"}:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{agent_name}' has a vague role: '{role}'. Consider being more specific.",
+                    f"{agent_path}.role",
+                )
+            )
+
+    if "goal" in agent_config:
+        goal = agent_config["goal"]
+        if not isinstance(goal, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' goal must be a string, got {type(goal).__name__}",
+                    f"{agent_path}.goal",
+                )
+            )
+        elif len(goal.strip()) < 20:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{agent_name}' has a very short goal. Consider being more descriptive.",
+                    f"{agent_path}.goal",
+                )
+            )
+        elif any(vague in goal.lower() for vague in {"help", "assist", "do"}):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{agent_name}' has a vague goal containing generic terms. Be more specific about what the agent should accomplish.",
+                    f"{agent_path}.goal",
+                )
+            )
+
+    if "backstory" in agent_config:
+        backstory = agent_config["backstory"]
+        if not isinstance(backstory, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' backstory must be a string, got {type(backstory).__name__}",
+                    f"{agent_path}.backstory",
+                )
+            )
+        elif len(backstory.strip()) < 30:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{agent_name}' has a very short backstory. Consider adding more context about the agent's expertise and experience.",
+                    f"{agent_path}.backstory",
+                )
+            )
+
+    if "tools" in agent_config:
+        tools = agent_config["tools"]
+        if not isinstance(tools, list):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' tools must be a list, got {type(tools).__name__}",
+                    f"{agent_path}.tools",
+                )
+            )
+        elif len(tools) == 0:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Agent '{agent_name}' has no tools assigned. Consider adding appropriate tools for this agent's role.",
+                    f"{agent_path}.tools",
+                )
+            )
+
+    if "verbose" in agent_config:
+        verbose = agent_config["verbose"]
+        if not isinstance(verbose, bool):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Agent '{agent_name}' verbose must be a boolean, got {type(verbose).__name__}",
+                    f"{agent_path}.verbose",
+                )
+            )
+
+
+def _validate_single_task_config(
+    task_config: Any,
+    task_name: str,
+    task_path: str,
+    issues: List[ValidationIssue],
+    available_agents: Optional[List[str]] = None,
+    all_task_names: Optional[List[str]] = None,
+) -> None:
+    """Helper function to validate a single task configuration."""
+
+    # Required fields for tasks
+    required_fields = {"description", "expected_output", "agent"}
+
+    if not isinstance(task_config, dict):
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Task '{task_name}' must be a dictionary, got {type(task_config).__name__}",
+                task_path,
+            )
+        )
+        return
+
+    # Check required fields
+    for field in required_fields:
+        if field not in task_config:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' is missing required field: {field}",
+                    f"{task_path}.{field}",
+                )
+            )
+
+    # Validate field types and content
+    if "description" in task_config:
+        description = task_config["description"]
+        if not isinstance(description, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' description must be a string, got {type(description).__name__}",
+                    f"{task_path}.description",
+                )
+            )
+        elif len(description.strip()) < 20:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Task '{task_name}' has a very short description. Consider being more descriptive.",
+                    f"{task_path}.description",
+                )
+            )
+        elif any(
+            vague in description.lower() for vague in {"work", "task", "do", "handle"}
+        ):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Task '{task_name}' has a vague description containing generic terms. Be more specific about what should be accomplished.",
+                    f"{task_path}.description",
+                )
+            )
+
+    if "expected_output" in task_config:
+        expected_output = task_config["expected_output"]
+        if not isinstance(expected_output, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' expected_output must be a string, got {type(expected_output).__name__}",
+                    f"{task_path}.expected_output",
+                )
+            )
+        elif len(expected_output.strip()) < 10:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Task '{task_name}' has a very short expected_output. Consider being more specific about the deliverable.",
+                    f"{task_path}.expected_output",
+                )
+            )
+
+    if "agent" in task_config:
+        agent = task_config["agent"]
+        if not isinstance(agent, str):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' agent must be a string, got {type(agent).__name__}",
+                    f"{task_path}.agent",
+                )
+            )
+        elif available_agents and agent not in available_agents:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' references unknown agent '{agent}'. Available agents: {', '.join(available_agents)}",
+                    f"{task_path}.agent",
+                )
+            )
+
+    # Validate optional context field
+    if "context" in task_config:
+        context = task_config["context"]
+        if not isinstance(context, list):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Task '{task_name}' context must be a list, got {type(context).__name__}",
+                    f"{task_path}.context",
+                )
+            )
+        elif all_task_names:
+            for ctx_task in context:
+                if ctx_task not in all_task_names:
+                    issues.append(
+                        ValidationIssue(
+                            IssueSeverity.ERROR,
+                            f"Task '{task_name}' context references unknown task '{ctx_task}'",
+                            f"{task_path}.context",
+                        )
+                    )
+
+    # Check for generic task name
+    if task_name.lower() in {"task", "work", "job", "activity"}:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.WARNING,
+                f"Task name '{task_name}' is very generic. Consider using a more descriptive name.",
+                task_path,
+            )
+        )
+
+
+def _validate_task_dependencies(
+    tasks_config: Dict[str, Any], file_path: str, issues: List[ValidationIssue]
+) -> None:
+    """Helper function to detect circular dependencies in task context."""
+
+    def has_circular_dependency(
+        task_name: str, visited: Set[str], path: List[str]
+    ) -> bool:
+        if task_name in visited:
+            cycle_start = path.index(task_name)
+            cycle = " -> ".join(path[cycle_start:] + [task_name])
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Circular dependency detected in task context: {cycle}",
+                    f"{file_path}[{task_name}].context",
+                )
+            )
+            return True
+
+        if task_name not in tasks_config:
+            return False
+
+        task_config = tasks_config[task_name]
+        if not isinstance(task_config, dict) or "context" not in task_config:
+            return False
+
+        context = task_config["context"]
+        if not isinstance(context, list):
+            return False
+
+        visited.add(task_name)
+        path.append(task_name)
+
+        for dependency in context:
+            if has_circular_dependency(dependency, visited.copy(), path.copy()):
+                return True
+
+        return False
+
+    # Check each task for circular dependencies
+    for task_name in tasks_config:
+        has_circular_dependency(task_name, set(), [])
