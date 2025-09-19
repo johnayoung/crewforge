@@ -1,19 +1,100 @@
 # Content Team Agent Configuration Template
 # Optimized for content creation teams with researchers and writers
-# Variables: agents, project.enhanced_* values
+# Uses intelligent tool patterns for content project type
 
+{% if agents %}
+{% for agent in agents %}
+{% if "research" in agent.role.lower() %}
 researcher:
-  role: {{ agents.researcher.role }}
+  role: {{ agent.role }}
   goal: >
-    {{ project.enhanced_research_goal }}
+    {{ agent.goal }}
   backstory: >
-    {{ project.enhanced_research_backstory }}
-  tools: {{ project.research_tools | tojson }}
+    {{ agent.backstory }}
+  tools:
+    {% if research_tools %}
+    {% for tool in research_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - SerperDevTool
+    - WebsiteSearchTool
+    {% endif %}
+  verbose: true
+
+{% elif "writ" in agent.role.lower() %}
+writer:
+  role: {{ agent.role }}
+  goal: >
+    {{ agent.goal }}
+  backstory: >
+    {{ agent.backstory }}
+  tools:
+    {% if writing_tools %}
+    {% for tool in writing_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - FileReadTool
+    - DirectoryReadTool
+    {% endif %}
+  verbose: true
+
+{% else %}
+{{ agent.role | lower | replace(' ', '_') }}:
+  role: {{ agent.role }}
+  goal: >
+    {{ agent.goal }}
+  backstory: >
+    {{ agent.backstory }}
+  tools:
+    {% if all_tools %}
+    {% for tool in all_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - SerperDevTool
+    - FileReadTool
+    {% endif %}
+  verbose: true
+
+{% endif %}
+{% endfor %}
+{% else %}
+# Default content team configuration
+researcher:
+  role: Content Researcher
+  goal: >
+    Research and gather relevant information for content creation
+  backstory: >
+    You are an experienced content researcher with expertise in finding reliable sources 
+    and extracting valuable insights for content creators.
+  tools:
+    {% if research_tools %}
+    {% for tool in research_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - SerperDevTool
+    - WebsiteSearchTool
+    {% endif %}
+  verbose: true
 
 writer:
-  role: {{ agents.writer.role }}
+  role: Content Writer
   goal: >
-    {{ project.enhanced_writing_goal }}
+    Create engaging and well-structured content based on research
   backstory: >
-    {{ project.enhanced_writing_backstory }}
-  tools: {{ project.writing_tools | tojson }}
+    You are a skilled content writer with expertise in creating compelling content 
+    that resonates with target audiences.
+  tools:
+    {% if writing_tools %}
+    {% for tool in writing_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - FileReadTool
+    - DirectoryReadTool
+    {% endif %}
+  verbose: true
+{% endif %}

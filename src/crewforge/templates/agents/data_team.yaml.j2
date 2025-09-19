@@ -1,22 +1,106 @@
 # Data Analysis Team Agent Configuration Template
-# Optimized for data science and analytics projects
-# Variables: agents, project.enhanced_* values
+# Optimized for data science and analytics projects with intelligent tool patterns
 
+{% if agents %}
+{% for agent in agents %}
+{% if "analyst" in agent.role.lower() or "scientist" in agent.role.lower() %}
 data_analyst:
-  role: {{ agents.data_analyst.role if agents.data_analyst else "Data Analyst" }}
+  role: {{ agent.role }}
   goal: >
-    {{ project.enhanced_analyst_goal or "Analyze complex datasets to extract meaningful insights and patterns" }}
+    {{ agent.goal }}
   backstory: >
-    {{ project.enhanced_analyst_backstory or "Senior data scientist with expertise in statistical analysis and machine learning" }}
-  tools: {{ project.analyst_tools | default(["pandas", "numpy", "matplotlib", "seaborn", "sql_database"]) | tojson }}
+    {{ agent.backstory }}
+  tools:
+    {% if data_tools %}
+    {% for tool in data_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - CSVSearchTool
+    - ExcelSearchTool
+    - JSONSearchTool
+    {% endif %}
+  verbose: true
 
+{% elif "engineer" in agent.role.lower() %}
 data_engineer:
-  role: {{ agents.data_engineer.role if agents.data_engineer else "Data Engineer" }}
+  role: {{ agent.role }}
   goal: >
-    {{ project.enhanced_engineer_goal or "Build robust data pipelines and infrastructure for scalable analytics" }}
+    {{ agent.goal }}
   backstory: >
-    {{ project.enhanced_engineer_backstory or "Experienced data engineer specializing in ETL processes and cloud data platforms" }}
-  tools: {{ project.engineer_tools | default(["apache_airflow", "spark", "kafka", "cloud_storage", "sql_database"]) | tojson }}
+    {{ agent.backstory }}
+  tools:
+    {% if analysis_tools %}
+    {% for tool in analysis_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - DatabaseTool
+    - CSVSearchTool
+    - ExcelSearchTool
+    {% endif %}
+  verbose: true
+
+{% else %}
+{{ agent.role | lower | replace(' ', '_') }}:
+  role: {{ agent.role }}
+  goal: >
+    {{ agent.goal }}
+  backstory: >
+    {{ agent.backstory }}
+  tools:
+    {% if all_tools %}
+    {% for tool in all_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - CSVSearchTool
+    - JSONSearchTool
+    {% endif %}
+  verbose: true
+
+{% endif %}
+{% endfor %}
+{% else %}
+# Default data team configuration
+data_analyst:
+  role: Data Analyst
+  goal: >
+    Analyze complex datasets to extract meaningful insights and identify patterns that drive business decisions
+  backstory: >
+    You are a senior data analyst with expertise in statistical analysis, data visualization, 
+    and translating complex data into actionable business insights.
+  tools:
+    {% if data_tools %}
+    {% for tool in data_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - CSVSearchTool
+    - ExcelSearchTool
+    - JSONSearchTool
+    {% endif %}
+  verbose: true
+
+business_analyst:
+  role: Business Intelligence Analyst
+  goal: >
+    Transform data findings into strategic business recommendations and reports
+  backstory: >
+    You are an experienced business analyst who bridges the gap between technical data analysis 
+    and strategic business decision-making.
+  tools:
+    {% if analysis_tools %}
+    {% for tool in analysis_tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    - DatabaseTool
+    - CSVSearchTool
+    - ExcelSearchTool
+    {% endif %}
+  verbose: true
+{% endif %}
 
 ml_engineer:
   role: {{ agents.ml_engineer.role if agents.ml_engineer else "ML Engineer" }}

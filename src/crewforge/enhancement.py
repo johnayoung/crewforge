@@ -17,6 +17,7 @@ from jinja2 import Environment, FileSystemLoader, Template
 from jinja2.exceptions import TemplateNotFound, TemplateError
 
 from .llm import LLMClient
+from .tool_patterns import ToolPatternRegistry, ToolPattern, ProjectTypePattern
 
 
 class EnhancementError(Exception):
@@ -97,6 +98,9 @@ class EnhancementEngine:
             keep_trailing_newline=True,
         )
 
+        # Initialize tool patterns registry
+        self.tool_registry = ToolPatternRegistry()
+
         self.logger.info(
             f"Enhancement engine initialized with templates from {self.templates_dir}"
         )
@@ -145,6 +149,142 @@ class EnhancementEngine:
             f"Found {len(templates)} templates in category '{category}': {templates}"
         )
         return sorted(templates)
+
+    def detect_project_type_and_get_tools(
+        self, project_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Detect project type and get recommended tools for the project.
+
+        Args:
+            project_spec: Project specification dictionary
+
+        Returns:
+            Dictionary containing project_type, recommended tools, and pattern info
+        """
+        project_type = self.tool_registry.detect_project_type(project_spec)
+        tools = self.tool_registry.get_tools_for_project(project_spec)
+        pattern_info = self.tool_registry.get_pattern_info(project_type)
+
+        self.logger.info(f"Detected project type: {project_type}")
+        self.logger.info(f"Recommended {len(tools)} tools for project")
+
+        return {
+            "project_type": project_type,
+            "tools": tools,
+            "pattern_info": pattern_info,
+            "tool_names": [tool.name for tool in tools],
+            "tool_imports": [tool.import_path for tool in tools],
+            "tool_dependencies": list(
+                set(dep for tool in tools for dep in tool.dependencies)
+            ),
+        }
+
+    def generate_tool_configuration(
+        self, project_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Generate tool configuration based on project specifications.
+
+        Args:
+            project_spec: Project specification dictionary
+
+        Returns:
+            Dictionary containing tool configuration for templates
+        """
+        tool_info = self.detect_project_type_and_get_tools(project_spec)
+        project_type = tool_info["project_type"]
+        tools = tool_info["tools"]
+
+        # Group tools by usage context for better organization
+        tools_by_context = {}
+        for tool in tools:
+            context = tool.usage_context or "general"
+            if context not in tools_by_context:
+                tools_by_context[context] = []
+            tools_by_context[context].append(tool)
+
+        # Create tool configuration for templates
+        tool_config = {
+            "project_type": project_type,
+            "all_tools": [tool.name for tool in tools],
+            "tool_imports": {tool.name: tool.import_path for tool in tools},
+            "tool_descriptions": {tool.name: tool.description for tool in tools},
+            "tool_dependencies": tool_info["tool_dependencies"],
+            "tools_by_context": {
+                context: [tool.name for tool in context_tools]
+                for context, context_tools in tools_by_context.items()
+            },
+        }
+
+        # Add project-type specific tool mappings for backward compatibility
+        if project_type == "research":
+            tool_config.update(
+                {
+                    "research_tools": [
+                        t.name
+                        for t in tools
+                        if "search" in t.name.lower() or "scrape" in t.name.lower()
+                    ],
+                    "analysis_tools": [
+                        t.name
+                        for t in tools
+                        if "pdf" in t.name.lower() or "data" in t.usage_context.lower()
+                    ],
+                }
+            )
+        elif project_type == "content":
+            tool_config.update(
+                {
+                    "research_tools": [
+                        t.name for t in tools if "search" in t.name.lower()
+                    ],
+                    "writing_tools": [
+                        t.name
+                        for t in tools
+                        if "file" in t.name.lower() or "directory" in t.name.lower()
+                    ],
+                }
+            )
+        elif project_type == "data_analysis":
+            tool_config.update(
+                {
+                    "data_tools": [
+                        t.name
+                        for t in tools
+                        if any(
+                            fmt in t.name.lower()
+                            for fmt in ["csv", "excel", "json", "database"]
+                        )
+                    ],
+                    "analysis_tools": [t.name for t in tools],
+                }
+            )
+        elif project_type == "customer_service":
+            tool_config.update(
+                {
+                    "support_tools": [t.name for t in tools],
+                    "knowledge_tools": [
+                        t.name
+                        for t in tools
+                        if "file" in t.name.lower() or "directory" in t.name.lower()
+                    ],
+                }
+            )
+        elif project_type == "development":
+            tool_config.update(
+                {
+                    "dev_tools": [t.name for t in tools],
+                    "research_tools": [
+                        t.name for t in tools if "search" in t.name.lower()
+                    ],
+                }
+            )
+
+        self.logger.debug(
+            f"Generated tool configuration for {project_type}: {len(tools)} tools"
+        )
+        return tool_config
 
     async def generate_agent_role(
         self,
@@ -307,17 +447,21 @@ Generate the agent configuration now:"""
             True if enhancement was successful, False otherwise
         """
         try:
+            # Generate tool configuration based on project type
+            tool_config = self.generate_tool_configuration(project_spec)
+
             # Generate intelligent agent roles
             generated_agents = await self.generate_agent_roles(
                 project_spec, llm_client, **kwargs
             )
 
-            # Create enhancement context with generated agents
+            # Create enhancement context with generated agents and tools
             enhancement_context = {
                 "agents": generated_agents,
                 "project_name": project_spec.get("project_name", "unknown"),
-                "project_type": project_spec.get("project_type", "general"),
+                "project_type": tool_config["project_type"],
                 "domain": project_spec.get("domain", "general"),
+                **tool_config,  # Include all tool configuration
                 **kwargs,
             }
 
@@ -795,3 +939,235 @@ Generate the task configuration now:"""
         self.logger.debug(f"Created backup: {backup_path}")
 
         return backup_path
+
+    def generate_tools_file(
+        self, project_path: Path, project_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Generate tools configuration file with appropriate imports and setup.
+
+        Args:
+            project_path: Path to the CrewAI project
+            project_spec: Project specification dictionary
+
+        Returns:
+            Dictionary with operation results
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "backup_created": False,
+                }
+
+            project_subdir = validation["project_subdir"]
+            tools_dir = project_subdir / "tools"
+
+            # Create tools directory if it doesn't exist
+            tools_dir.mkdir(exist_ok=True)
+
+            # Generate tool configuration
+            tool_config = self.generate_tool_configuration(project_spec)
+
+            # Generate tools/__init__.py with imports
+            init_file = tools_dir / "__init__.py"
+            backup_path = None
+
+            if init_file.exists():
+                backup_path = self._create_backup(init_file)
+
+            # Create tool imports content
+            tool_imports = []
+            for tool in self.tool_registry.get_tools_for_project(project_spec):
+                if tool.import_path and tool.name:
+                    tool_imports.append(f"from {tool.import_path} import {tool.name}")
+
+            tools_content = f'''"""
+Tools module for {project_spec.get("project_name", "project")}.
+
+Auto-generated tool imports based on project type: {tool_config["project_type"]}
+"""
+
+{chr(10).join(tool_imports)}
+
+# Tool instances for easy access
+tools_registry = {{
+{chr(10).join(f'    "{tool.name}": {tool.name},' for tool in self.tool_registry.get_tools_for_project(project_spec))}
+}}
+
+def get_tools_for_agent(agent_role: str = None):
+    """
+    Get appropriate tools for an agent based on their role.
+    
+    Args:
+        agent_role: Role of the agent (optional)
+        
+    Returns:
+        List of tool instances
+    """
+    # Return all available tools by default
+    return list(tools_registry.values())
+
+def get_tool(tool_name: str):
+    """
+    Get a specific tool by name.
+    
+    Args:
+        tool_name: Name of the tool
+        
+    Returns:
+        Tool instance or None if not found
+    """
+    return tools_registry.get(tool_name)
+'''
+
+            # Write tools file
+            init_file.write_text(tools_content, encoding="utf-8")
+
+            self.logger.info(f"Generated tools configuration in {init_file}")
+
+            return {
+                "success": True,
+                "tools_file": init_file,
+                "backup_file": backup_path,
+                "backup_created": backup_path is not None,
+                "tool_count": len(tool_config["all_tools"]),
+                "dependencies": tool_config["tool_dependencies"],
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate tools file: {str(e)}")
+            return {"success": False, "error": str(e), "backup_created": False}
+
+    def enhance_project_with_tools(
+        self,
+        project_path: Path,
+        project_spec: Dict[str, Any],
+        update_crew_file: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Enhance project with appropriate tools based on project type.
+
+        Args:
+            project_path: Path to the CrewAI project
+            project_spec: Project specification
+            update_crew_file: Whether to update the crew.py file with tool imports
+
+        Returns:
+            Dictionary with enhancement results
+        """
+        try:
+            # Generate tools file
+            tools_result = self.generate_tools_file(project_path, project_spec)
+
+            if not tools_result["success"]:
+                return tools_result
+
+            results = {
+                "success": True,
+                "tools_generated": True,
+                "tools_file": tools_result["tools_file"],
+                "tool_count": tools_result["tool_count"],
+                "dependencies": tools_result["dependencies"],
+            }
+
+            # Optionally update crew.py file
+            if update_crew_file:
+                crew_result = self._update_crew_file_with_tools(
+                    project_path, project_spec
+                )
+                results.update(
+                    {
+                        "crew_updated": crew_result["success"],
+                        "crew_file": crew_result.get("crew_file"),
+                        "crew_backup": crew_result.get("backup_file"),
+                    }
+                )
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to enhance project with tools: {str(e)}")
+            return {"success": False, "error": str(e)}
+
+    def _update_crew_file_with_tools(
+        self, project_path: Path, project_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update crew.py file to import and use tools from the tools module.
+
+        Args:
+            project_path: Path to the CrewAI project
+            project_spec: Project specification
+
+        Returns:
+            Dictionary with update results
+        """
+        try:
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {"success": False, "error": validation["error"]}
+
+            project_subdir = validation["project_subdir"]
+            crew_file = project_subdir / "crew.py"
+
+            if not crew_file.exists():
+                return {
+                    "success": False,
+                    "error": f"crew.py not found in {project_subdir}",
+                }
+
+            # Create backup
+            backup_path = self._create_backup(crew_file)
+
+            # Read current content
+            current_content = crew_file.read_text(encoding="utf-8")
+
+            # Add tools import if not already present
+            tools_import = "from .tools import get_tools_for_agent, get_tool"
+
+            if tools_import not in current_content:
+                # Find a good place to add the import (after other imports)
+                lines = current_content.split("\n")
+                import_lines = []
+                other_lines = []
+                found_imports = False
+
+                for line in lines:
+                    if (
+                        line.strip().startswith(("import ", "from "))
+                        and "crewai" not in line.lower()
+                    ):
+                        import_lines.append(line)
+                        found_imports = True
+                    elif found_imports and line.strip() == "":
+                        import_lines.append(line)
+                        import_lines.append(tools_import)
+                        other_lines.extend(lines[len(import_lines) - 1 :])
+                        break
+                    else:
+                        other_lines.append(line)
+
+                if not found_imports:
+                    # Add import at the beginning
+                    updated_content = tools_import + "\n\n" + current_content
+                else:
+                    updated_content = "\n".join(import_lines + other_lines)
+
+                # Write updated content
+                crew_file.write_text(updated_content, encoding="utf-8")
+
+                self.logger.info(f"Updated crew.py with tools import")
+
+            return {
+                "success": True,
+                "crew_file": crew_file,
+                "backup_file": backup_path,
+            }
+
+        except Exception as e:
+            self.logger.error(f"Failed to update crew.py: {str(e)}")
+            return {"success": False, "error": str(e)}
