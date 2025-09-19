@@ -5,6 +5,8 @@ This module provides intelligent customization of generated CrewAI projects
 using Jinja2 templates for domain-specific configurations of agents and tasks.
 """
 
+import asyncio
+import json
 import logging
 import shutil
 import yaml
@@ -13,6 +15,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from jinja2 import Environment, FileSystemLoader, Template
 from jinja2.exceptions import TemplateNotFound, TemplateError
+
+from .llm import LLMClient
 
 
 class EnhancementError(Exception):
@@ -141,6 +145,194 @@ class EnhancementEngine:
             f"Found {len(templates)} templates in category '{category}': {templates}"
         )
         return sorted(templates)
+
+    async def generate_agent_role(
+        self,
+        agent_spec: Dict[str, Any],
+        project_spec: Dict[str, Any],
+        llm_client: LLMClient,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Generate an intelligent agent role using liteLLM.
+
+        Args:
+            agent_spec: Agent specification with role and description
+            project_spec: Project specification with context
+            llm_client: LLM client for generation
+            **kwargs: Additional parameters for LLM generation
+
+        Returns:
+            Dictionary with generated role, goal, and backstory
+
+        Raises:
+            json.JSONDecodeError: If LLM returns invalid JSON
+            KeyError: If required fields are missing from LLM response
+            LLMError: If LLM request fails
+        """
+        prompt = self._create_agent_generation_prompt(agent_spec, project_spec)
+
+        self.logger.debug(
+            f"Generating agent role for '{agent_spec.get('role', 'unknown')}' "
+            f"in project '{project_spec.get('project_name', 'unknown')}'"
+        )
+
+        # Get LLM response
+        response = await llm_client.complete(prompt, **kwargs)
+
+        # Parse JSON response
+        try:
+            agent_data = json.loads(response)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Invalid JSON response from LLM: {response}")
+            raise
+
+        # Validate required fields
+        required_fields = ["role", "goal", "backstory"]
+        for field in required_fields:
+            if field not in agent_data:
+                self.logger.error(f"Missing required field '{field}' in LLM response")
+                raise KeyError(f"Missing required field: {field}")
+
+        self.logger.info(f"Successfully generated agent role: {agent_data['role']}")
+        return agent_data
+
+    async def generate_agent_roles(
+        self, project_spec: Dict[str, Any], llm_client: LLMClient, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate intelligent agent roles for all agents in the project specification.
+
+        Args:
+            project_spec: Project specification with agents list
+            llm_client: LLM client for generation
+            **kwargs: Additional parameters for LLM generation
+
+        Returns:
+            List of generated agent configurations
+
+        Raises:
+            ValueError: If project_spec doesn't contain agents
+            Various exceptions from generate_agent_role
+        """
+        agents = project_spec.get("agents", [])
+        if not agents:
+            raise ValueError("Project specification must contain 'agents' list")
+
+        self.logger.info(f"Generating roles for {len(agents)} agents")
+
+        generated_agents = []
+        for agent_spec in agents:
+            agent_role = await self.generate_agent_role(
+                agent_spec, project_spec, llm_client, **kwargs
+            )
+            generated_agents.append(agent_role)
+
+        self.logger.info(f"Successfully generated {len(generated_agents)} agent roles")
+        return generated_agents
+
+    def _create_agent_generation_prompt(
+        self, agent_spec: Dict[str, Any], project_spec: Dict[str, Any]
+    ) -> str:
+        """
+        Create a prompt for LLM agent generation.
+
+        Args:
+            agent_spec: Agent specification with role and description
+            project_spec: Project specification with context
+
+        Returns:
+            Formatted prompt string for LLM
+        """
+        project_name = project_spec.get("project_name", "Unknown Project")
+        project_description = project_spec.get(
+            "description", "No description available"
+        )
+        domain = project_spec.get("domain", "general")
+        project_type = project_spec.get("project_type", "general")
+
+        agent_role = agent_spec.get("role", "Unknown Role")
+        agent_description = agent_spec.get("description", "No description available")
+
+        prompt = f"""You are an expert at creating CrewAI agent configurations. Generate an intelligent agent role specification for a CrewAI project.
+
+Project Context:
+- Project Name: {project_name}
+- Description: {project_description}
+- Domain: {domain}
+- Type: {project_type}
+
+Agent to Generate:
+- Role: {agent_role}
+- Description: {agent_description}
+
+Requirements:
+1. Create a professional, specific role name that fits the project domain
+2. Write a clear, actionable goal statement that aligns with the project objectives
+3. Generate a compelling backstory that establishes expertise and credibility
+4. The backstory should be 2-3 sentences and include relevant experience
+5. Make the agent feel like a real professional with domain expertise
+
+Output Format:
+Return ONLY a valid JSON object with exactly these fields:
+{{
+    "role": "Specific professional role title",
+    "goal": "Clear, actionable goal statement for this agent",
+    "backstory": "Compelling 2-3 sentence backstory establishing expertise and credibility"
+}}
+
+Generate the agent configuration now:"""
+
+        return prompt
+
+    async def enhance_project_with_generated_agents(
+        self,
+        project_path: Path,
+        project_spec: Dict[str, Any],
+        llm_client: LLMClient,
+        template_name: str = "default",
+        **kwargs,
+    ) -> bool:
+        """
+        Enhance a CrewAI project by generating intelligent agent roles and applying them.
+
+        Args:
+            project_path: Path to the CrewAI project
+            project_spec: Project specification
+            llm_client: LLM client for agent generation
+            template_name: Template to use for rendering
+            **kwargs: Additional parameters
+
+        Returns:
+            True if enhancement was successful, False otherwise
+        """
+        try:
+            # Generate intelligent agent roles
+            generated_agents = await self.generate_agent_roles(
+                project_spec, llm_client, **kwargs
+            )
+
+            # Create enhancement context with generated agents
+            enhancement_context = {
+                "agents": generated_agents,
+                "project_name": project_spec.get("project_name", "unknown"),
+                "project_type": project_spec.get("project_type", "general"),
+                "domain": project_spec.get("domain", "general"),
+                **kwargs,
+            }
+
+            # Apply enhancements using existing template system
+            result = self.enhance_agents_config(
+                project_path, enhancement_context, template_name
+            )
+
+            return result.get("success", False)
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to enhance project with generated agents: {str(e)}"
+            )
+            return False
 
     def render_agent_template(self, template_name: str, context: Dict[str, Any]) -> str:
         """
