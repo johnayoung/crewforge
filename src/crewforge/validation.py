@@ -5,7 +5,10 @@ This module provides comprehensive validation for parsed project specifications,
 ensuring they are complete, valid, and suitable for CrewAI project generation.
 """
 
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -1540,6 +1543,11 @@ def validate_generated_project(project_root: str) -> ValidationResult:
                 )
             )
 
+    # 5. Validate workflow execution (only if project structure is valid)
+    if src_dir.exists():
+        workflow_result = validate_crewai_workflow_execution(project_root)
+        all_issues.extend(workflow_result.issues)
+
     return ValidationResult(issues=all_issues)
 
 
@@ -2170,3 +2178,193 @@ def _validate_task_dependencies(
     # Check each task for circular dependencies
     for task_name in tasks_config:
         has_circular_dependency(task_name, set(), [])
+
+
+def validate_crewai_workflow_execution(
+    project_root: str, timeout: int = 60
+) -> ValidationResult:
+    """
+    Validate CrewAI project workflow execution.
+
+    Tests if the generated CrewAI project can execute its main workflow
+    without errors. This includes validating that the project can run
+    its entry point files (main.py, crew.py) and handle dependencies.
+
+    Args:
+        project_root: Root directory of the CrewAI project
+        timeout: Maximum execution time in seconds (default: 60)
+
+    Returns:
+        ValidationResult with execution validation results
+    """
+    from pathlib import Path
+
+    project_path = Path(project_root)
+    issues: List[ValidationIssue] = []
+
+    # Check if project exists
+    if not project_path.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Project not found: {project_root}",
+                project_root,
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Find project structure and entry points
+    src_dir = project_path / "src"
+    if not src_dir.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Missing src directory in project: {project_root}",
+                str(src_dir),
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Find project subdirectory
+    project_subdirs = [
+        d for d in src_dir.iterdir() if d.is_dir() and d.name != "__pycache__"
+    ]
+
+    if not project_subdirs:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"No project subdirectory found in src/: {project_root}",
+                str(src_dir),
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    project_subdir = project_subdirs[0]
+    main_py = project_subdir / "main.py"
+
+    if not main_py.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"No main entry point found: main.py not found in {project_subdir.name}",
+                str(main_py),
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Prepare environment
+    env_file = project_path / ".env"
+    env_vars = {}
+
+    if env_file.exists():
+        try:
+            env_content = env_file.read_text(encoding="utf-8")
+            for line in env_content.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    env_vars[key.strip()] = value.strip()
+        except Exception:
+            # Environment file issues won't block execution validation
+            pass
+
+    # Add PYTHONPATH to ensure imports work
+    env_vars["PYTHONPATH"] = str(src_dir)
+
+    try:
+        # Execute the project's main entry point
+        # Use sys.executable to get the current Python interpreter
+        import sys
+
+        cmd = [sys.executable, str(main_py)]
+
+        # Run subprocess with timeout and capture output
+        result = subprocess.run(
+            cmd,
+            cwd=str(project_path),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**dict(os.environ), **env_vars} if env_vars else None,
+        )
+
+        if result.returncode == 0:
+            # Successful execution
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"CrewAI workflow executed successfully",
+                    str(main_py),
+                )
+            )
+
+            # Add output information if available
+            if result.stdout.strip():
+                issues.append(
+                    ValidationIssue(
+                        IssueSeverity.INFO,
+                        f"Execution output captured: {len(result.stdout.strip().split())} words",
+                        str(main_py),
+                    )
+                )
+        else:
+            # Execution failed
+            error_msg = (
+                result.stderr.strip()
+                if result.stderr.strip()
+                else "Unknown execution error"
+            )
+
+            # Categorize the type of error
+            if "SyntaxError" in error_msg or "IndentationError" in error_msg:
+                issues.append(
+                    ValidationIssue(
+                        IssueSeverity.ERROR,
+                        f"Syntax error in workflow execution: {error_msg}",
+                        str(main_py),
+                    )
+                )
+            elif "ImportError" in error_msg or "ModuleNotFoundError" in error_msg:
+                issues.append(
+                    ValidationIssue(
+                        IssueSeverity.ERROR,
+                        f"Import error in workflow execution: {error_msg}",
+                        str(main_py),
+                    )
+                )
+            else:
+                issues.append(
+                    ValidationIssue(
+                        IssueSeverity.ERROR,
+                        f"Runtime error in workflow execution: {error_msg}",
+                        str(main_py),
+                    )
+                )
+
+    except subprocess.TimeoutExpired:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Workflow execution timed out after {timeout} seconds",
+                str(main_py),
+            )
+        )
+    except FileNotFoundError:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Python interpreter not found. Cannot execute workflow.",
+                str(main_py),
+            )
+        )
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Execution failed: {str(e)}",
+                str(main_py),
+            )
+        )
+
+    return ValidationResult(issues=issues)
