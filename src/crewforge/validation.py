@@ -9,6 +9,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -129,6 +131,144 @@ class ValidationResult:
                 lines.append(f"  - {info}")
 
         return "\n".join(lines)
+
+
+class ValidationCache:
+    """
+    Cache for validation results to improve performance.
+
+    Caches validation results based on file path, modification time, and content hash
+    to avoid re-validating unchanged files.
+    """
+
+    def __init__(self, max_size: int = 100):
+        """Initialize the validation cache."""
+        self._cache: Dict[str, ValidationResult] = {}
+        self._metadata: Dict[str, Dict[str, Any]] = {}
+        self._max_size = max_size
+        self._lock = threading.RLock()
+
+    def _generate_cache_key(self, file_path: str) -> str:
+        """
+        Generate a cache key based on file path, modification time, and content hash.
+
+        Args:
+            file_path: Path to the file to generate key for
+
+        Returns:
+            Cache key string
+        """
+        import hashlib
+        from pathlib import Path
+
+        file_path_obj = Path(file_path)
+
+        if not file_path_obj.exists():
+            return f"{file_path}:nonexistent"
+
+        try:
+            # Get file stats
+            stat = file_path_obj.stat()
+            mtime = stat.st_mtime
+            size = stat.st_size
+
+            # Generate content hash for small files, or use size + mtime for large files
+            if size < 1024 * 1024:  # 1MB limit
+                content = file_path_obj.read_text(encoding='utf-8', errors='ignore')
+                content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            else:
+                content_hash = f"large:{size}"
+
+            return f"{file_path}:{mtime}:{content_hash}"
+
+        except (OSError, IOError):
+            # If we can't read the file, use path + current time
+            return f"{file_path}:error:{time.time()}"
+
+    def get(self, file_path: str) -> Optional[ValidationResult]:
+        """
+        Get cached validation result for a file.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Cached ValidationResult or None if not cached or invalid
+        """
+        with self._lock:
+            cache_key = self._generate_cache_key(file_path)
+
+            # Check if we have this key cached
+            if cache_key in self._cache:
+                return self._cache[cache_key]
+
+            return None
+
+    def set(self, file_path: str, result: ValidationResult) -> None:
+        """
+        Cache a validation result for a file.
+
+        Args:
+            file_path: Path to the file
+            result: ValidationResult to cache
+        """
+        with self._lock:
+            cache_key = self._generate_cache_key(file_path)
+
+            # Implement LRU eviction if cache is full
+            if len(self._cache) >= self._max_size:
+                # Remove oldest entries (simple FIFO)
+                oldest_keys = list(self._cache.keys())[:self._max_size // 4]
+                for key in oldest_keys:
+                    del self._cache[key]
+                    if key in self._metadata:
+                        del self._metadata[key]
+
+            self._cache[cache_key] = result
+            self._metadata[cache_key] = {
+                'timestamp': time.time(),
+                'file_path': file_path
+            }
+
+    def clear(self) -> None:
+        """Clear all cached validation results."""
+        with self._lock:
+            self._cache.clear()
+            self._metadata.clear()
+
+    def invalidate_file(self, file_path: str) -> None:
+        """
+        Invalidate cache entries for a specific file.
+
+        Args:
+            file_path: Path to the file to invalidate
+        """
+        with self._lock:
+            # Remove all cache entries that contain this file path
+            keys_to_remove = []
+            for cache_key in self._cache.keys():
+                if file_path in cache_key:
+                    keys_to_remove.append(cache_key)
+
+            for key in keys_to_remove:
+                del self._cache[key]
+                if key in self._metadata:
+                    del self._metadata[key]
+
+    @property
+    def size(self) -> int:
+        """Get current cache size."""
+        with self._lock:
+            return len(self._cache)
+
+    @property
+    def max_size(self) -> int:
+        """Get maximum cache size."""
+        return self._max_size
+
+
+# Global cache instance
+_validation_cache = ValidationCache()
 
 
 class ValidationError(Exception):
@@ -965,6 +1105,12 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
     from pathlib import Path
 
     file_path = Path(file_path)
+
+    # Check cache first
+    cached_result = _validation_cache.get(str(file_path))
+    if cached_result is not None:
+        return cached_result
+
     issues: List[ValidationIssue] = []
 
     # Check if file exists
@@ -974,7 +1120,9 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                 IssueSeverity.ERROR, f"File not found: {file_path}", str(file_path)
             )
         )
-        return ValidationResult(issues=issues)
+        result = ValidationResult(issues=issues)
+        _validation_cache.set(str(file_path), result)
+        return result
 
     # Check if path is actually a file
     if not file_path.is_file():
@@ -983,7 +1131,9 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                 IssueSeverity.ERROR, f"Path is not a file: {file_path}", str(file_path)
             )
         )
-        return ValidationResult(issues=issues)
+        result = ValidationResult(issues=issues)
+        _validation_cache.set(str(file_path), result)
+        return result
 
     try:
         # Read file content
@@ -1083,7 +1233,9 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
             )
         )
 
-    return ValidationResult(issues=issues)
+    result = ValidationResult(issues=issues)
+    _validation_cache.set(str(file_path), result)
+    return result
 
 
 def validate_python_imports(
@@ -1105,6 +1257,13 @@ def validate_python_imports(
     from pathlib import Path
 
     file_path = Path(file_path)
+
+    # Check cache first
+    cache_key = f"{file_path}:{project_root}"
+    cached_result = _validation_cache.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+
     issues: List[ValidationIssue] = []
 
     # First validate syntax
@@ -1112,7 +1271,9 @@ def validate_python_imports(
     if not syntax_result.is_valid:
         # Return syntax errors - can't validate imports if syntax is broken
         issues.extend(syntax_result.errors)
-        return ValidationResult(issues=issues)
+        result = ValidationResult(issues=issues)
+        _validation_cache.set(cache_key, result)
+        return result
 
     try:
         content = file_path.read_text(encoding="utf-8")
@@ -1213,7 +1374,9 @@ def validate_python_imports(
             )
         )
 
-    return ValidationResult(issues=issues)
+    result = ValidationResult(issues=issues)
+    _validation_cache.set(cache_key, result)
+    return result
 
 
 def _is_valid_import(
@@ -1642,6 +1805,12 @@ def validate_crewai_agents_config(file_path: Union[str, Path]) -> ValidationResu
     import yaml
 
     file_path = Path(file_path)
+
+    # Check cache first
+    cached_result = _validation_cache.get(str(file_path))
+    if cached_result is not None:
+        return cached_result
+
     issues: List[ValidationIssue] = []
 
     # Check if file exists
@@ -1653,7 +1822,9 @@ def validate_crewai_agents_config(file_path: Union[str, Path]) -> ValidationResu
                 str(file_path),
             )
         )
-        return ValidationResult(issues=issues)
+        result = ValidationResult(issues=issues)
+        _validation_cache.set(str(file_path), result)
+        return result
 
     try:
         # Read and parse YAML
@@ -1733,7 +1904,9 @@ def validate_crewai_agents_config(file_path: Union[str, Path]) -> ValidationResu
             )
         )
 
-    return ValidationResult(issues=issues)
+    result = ValidationResult(issues=issues)
+    _validation_cache.set(str(file_path), result)
+    return result
 
 
 def validate_crewai_tasks_config(
@@ -1752,6 +1925,13 @@ def validate_crewai_tasks_config(
     import yaml
 
     file_path = Path(file_path)
+
+    # Check cache first
+    cache_key = f"{file_path}:{available_agents}"
+    cached_result = _validation_cache.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+
     issues: List[ValidationIssue] = []
 
     # Check if file exists
@@ -1763,7 +1943,9 @@ def validate_crewai_tasks_config(
                 str(file_path),
             )
         )
-        return ValidationResult(issues=issues)
+        result = ValidationResult(issues=issues)
+        _validation_cache.set(cache_key, result)
+        return result
 
     try:
         # Read and parse YAML
@@ -1847,7 +2029,9 @@ def validate_crewai_tasks_config(
             )
         )
 
-    return ValidationResult(issues=issues)
+    result = ValidationResult(issues=issues)
+    _validation_cache.set(cache_key, result)
+    return result
 
 
 def validate_crewai_config_consistency(
