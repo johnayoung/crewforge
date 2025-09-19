@@ -52,10 +52,28 @@ class ValidationIssue:
     severity: IssueSeverity
     message: str
     field_path: str
+    suggestions: List[str] = field(default_factory=list)
+    context: Dict[str, Any] = field(default_factory=dict)
+    error_code: Optional[str] = None
 
     def __str__(self) -> str:
-        """String representation of validation issue."""
-        return f"{self.severity.value.upper()}: {self.message} (at {self.field_path})"
+        """String representation of validation issue with detailed information."""
+        lines = [f"{self.severity.value.upper()}: {self.message} (at {self.field_path})"]
+        
+        if self.error_code:
+            lines.append(f"Error Code: {self.error_code}")
+        
+        if self.context:
+            lines.append("Context:")
+            for key, value in self.context.items():
+                lines.append(f"  {key}: {value}")
+        
+        if self.suggestions:
+            lines.append("Suggestions:")
+            for suggestion in self.suggestions:
+                lines.append(f"  - {suggestion}")
+        
+        return "\n".join(lines)
 
 
 @dataclass
@@ -996,6 +1014,18 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                     IssueSeverity.ERROR,
                     f"Indentation error in {file_path.name} at line {e.lineno}: {e.msg}",
                     str(file_path),
+                    suggestions=[
+                        "Use consistent indentation (4 spaces recommended)",
+                        "Check for mixed tabs and spaces",
+                        "Ensure all code blocks are properly indented",
+                        f"Look at line {e.lineno} and surrounding lines for indentation issues"
+                    ],
+                    context={
+                        "line_number": e.lineno,
+                        "error_type": "IndentationError",
+                        "message": e.msg
+                    },
+                    error_code="PY001"
                 )
             )
         except SyntaxError as e:
@@ -1004,6 +1034,21 @@ def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
                     IssueSeverity.ERROR,
                     f"Syntax error in {file_path.name} at line {e.lineno}: {e.msg}",
                     str(file_path),
+                    suggestions=[
+                        "Check for missing colons after function/class definitions",
+                        "Verify parentheses and brackets are properly matched",
+                        "Ensure string literals are properly quoted",
+                        f"Review line {e.lineno} for syntax issues",
+                        "Use python -m py_compile to check syntax"
+                    ],
+                    context={
+                        "line_number": e.lineno,
+                        "column": getattr(e, 'offset', None),
+                        "error_type": "SyntaxError",
+                        "message": e.msg,
+                        "text": getattr(e, 'text', '').strip() if hasattr(e, 'text') else None
+                    },
+                    error_code="PY002"
                 )
             )
         except Exception as e:
@@ -1106,6 +1151,17 @@ def validate_python_imports(
                             IssueSeverity.WARNING,
                             f"Relative import '{import_name}' may not be resolvable: {file_path.name}",
                             str(file_path),
+                            suggestions=[
+                                "Convert to absolute imports when possible",
+                                "Ensure the relative path is correct",
+                                "Check if the module is in the same package",
+                                "Use absolute imports for better maintainability"
+                            ],
+                            context={
+                                "import_name": import_name,
+                                "import_type": "relative"
+                            },
+                            error_code="IMP001"
                         )
                     )
                 else:
@@ -1114,6 +1170,19 @@ def validate_python_imports(
                             IssueSeverity.ERROR,
                             f"Import '{import_name}' not found: {file_path.name}",
                             str(file_path),
+                            suggestions=[
+                                f"Install the package: pip install {import_name.split('.')[0]}",
+                                f"Check if {import_name.split('.')[0]} is in requirements.txt",
+                                "Verify the package name is spelled correctly",
+                                "Check if the module is in your project directory",
+                                f"Try: python -c 'import {import_name.split('.')[0]}'"
+                            ],
+                            context={
+                                "import_name": import_name,
+                                "package_name": import_name.split('.')[0],
+                                "import_type": "absolute"
+                            },
+                            error_code="IMP002"
                         )
                     )
 
@@ -2368,3 +2437,124 @@ def validate_crewai_workflow_execution(
         )
 
     return ValidationResult(issues=issues)
+
+
+def generate_detailed_error_report(
+    validation_result: ValidationResult, project_root: str
+) -> str:
+    """
+    Generate a detailed error report with debugging guidance.
+
+    Args:
+        validation_result: The validation result to report on
+        project_root: Root directory of the project
+
+    Returns:
+        Detailed error report string with debugging guidance
+    """
+    from pathlib import Path
+
+    report_lines = [
+        "=" * 60,
+        "DETAILED ERROR REPORT & DEBUGGING GUIDANCE",
+        "=" * 60,
+        f"Project: {Path(project_root).name}",
+        f"Validation Status: {'PASSED' if validation_result.is_valid else 'FAILED'}",
+        f"Total Issues: {len(validation_result.issues)}",
+        f"Errors: {len(validation_result.errors)}",
+        f"Warnings: {len(validation_result.warnings)}",
+        f"Info: {len(validation_result.info_messages)}",
+        "",
+    ]
+
+    if validation_result.errors:
+        report_lines.extend([
+            "🚨 CRITICAL ERRORS (Must Fix)",
+            "-" * 40,
+        ])
+        
+        for i, error in enumerate(validation_result.errors, 1):
+            report_lines.extend([
+                f"{i}. {error.message}",
+                f"   Location: {error.field_path}",
+            ])
+            
+            if error.error_code:
+                report_lines.append(f"   Error Code: {error.error_code}")
+            
+            if error.context:
+                report_lines.append("   Context:")
+                for key, value in error.context.items():
+                    report_lines.append(f"     {key}: {value}")
+            
+            if error.suggestions:
+                report_lines.append("   🔧 Suggested Fixes:")
+                for suggestion in error.suggestions:
+                    report_lines.append(f"     • {suggestion}")
+            
+            report_lines.append("")
+
+    if validation_result.warnings:
+        report_lines.extend([
+            "⚠️  WARNINGS (Should Review)",
+            "-" * 40,
+        ])
+        
+        for i, warning in enumerate(validation_result.warnings, 1):
+            report_lines.extend([
+                f"{i}. {warning.message}",
+                f"   Location: {warning.field_path}",
+            ])
+            
+            if warning.suggestions:
+                report_lines.append("   💡 Suggestions:")
+                for suggestion in warning.suggestions:
+                    report_lines.append(f"     • {suggestion}")
+            
+            report_lines.append("")
+
+    if validation_result.info_messages:
+        report_lines.extend([
+            "ℹ️  INFORMATION",
+            "-" * 40,
+        ])
+        
+        for info in validation_result.info_messages:
+            report_lines.append(f"• {info.message}")
+
+    # Add debugging guidance section
+    report_lines.extend([
+        "",
+        "=" * 60,
+        "DEBUGGING GUIDANCE",
+        "=" * 60,
+    ])
+
+    if validation_result.errors:
+        report_lines.extend([
+            "🔍 Common Debugging Steps:",
+            "1. Check Python syntax: python -m py_compile <file>",
+            "2. Verify imports: python -c 'import <module>'",
+            "3. Test configuration: python -c 'import yaml; yaml.safe_load(open(\"config/agents.yaml\"))'",
+            "4. Run workflow: python src/<project>/main.py",
+            "",
+            "📚 Useful Commands:",
+            f"• cd {project_root}",
+            "• python -m venv venv && source venv/bin/activate",
+            "• pip install -r requirements.txt (if exists)",
+            "• python src/*/main.py",
+            "",
+            "🐛 If issues persist:",
+            "• Check Python version: python --version",
+            "• Verify CrewAI installation: pip show crewai",
+            "• Test basic CrewAI: python -c 'from crewai import Agent; print(\"CrewAI OK\")'",
+        ])
+    else:
+        report_lines.extend([
+            "✅ No critical errors found!",
+            "Your project should be ready to run.",
+            "",
+            f"Try: cd {project_root} && python src/*/*/main.py"
+        ])
+
+    return "\n".join(report_lines)
