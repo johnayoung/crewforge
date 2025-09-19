@@ -334,6 +334,190 @@ Generate the agent configuration now:"""
             )
             return False
 
+    async def generate_task_definition(
+        self,
+        task_spec: Dict[str, Any],
+        project_spec: Dict[str, Any],
+        llm_client: LLMClient,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Generate an intelligent task definition using liteLLM.
+
+        Args:
+            task_spec: Task specification with name, description, and agent
+            project_spec: Project specification with context
+            llm_client: LLM client for generation
+            **kwargs: Additional parameters for LLM generation
+
+        Returns:
+            Dictionary with generated description, expected_output, context, and tools
+
+        Raises:
+            json.JSONDecodeError: If LLM returns invalid JSON
+            KeyError: If required fields are missing from LLM response
+            LLMError: If LLM request fails
+        """
+        prompt = self._create_task_generation_prompt(task_spec, project_spec)
+
+        self.logger.debug(
+            f"Generating task definition for '{task_spec.get('name', 'unknown')}' "
+            f"in project '{project_spec.get('project_name', 'unknown')}'"
+        )
+
+        # Get LLM response
+        response = await llm_client.complete(prompt, **kwargs)
+
+        # Parse JSON response
+        try:
+            task_data = json.loads(response)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Invalid JSON response from LLM: {response}")
+            raise
+
+        # Validate required fields
+        required_fields = ["description", "expected_output", "context", "tools"]
+        for field in required_fields:
+            if field not in task_data:
+                self.logger.error(f"Missing required field '{field}' in LLM response")
+                raise KeyError(f"Missing required field: {field}")
+
+        self.logger.info(
+            f"Successfully generated task definition: {task_spec.get('name', 'unknown')}"
+        )
+        return task_data
+
+    async def generate_task_definitions(
+        self, project_spec: Dict[str, Any], llm_client: LLMClient, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate intelligent task definitions for all tasks in the project specification.
+
+        Args:
+            project_spec: Project specification with tasks list
+            llm_client: LLM client for generation
+            **kwargs: Additional parameters for LLM generation
+
+        Returns:
+            List of generated task configurations
+
+        Raises:
+            ValueError: If project_spec doesn't contain tasks
+            Various exceptions from generate_task_definition
+        """
+        tasks = project_spec.get("tasks", [])
+        if not tasks:
+            raise ValueError("Project specification must contain 'tasks' list")
+
+        self.logger.info(f"Generating definitions for {len(tasks)} tasks")
+
+        generated_tasks = []
+        for i, task in enumerate(tasks):
+            # Convert string tasks to task specs if needed
+            if isinstance(task, str):
+                task_spec = {
+                    "name": f"task_{i+1}",
+                    "description": task,
+                    "agent": f"agent_{(i % len(project_spec.get('agents', ['default'])))+1}",
+                }
+            else:
+                task_spec = task
+
+            task_definition = await self.generate_task_definition(
+                task_spec, project_spec, llm_client, **kwargs
+            )
+
+            # Combine task spec with generated definition
+            enhanced_task = {**task_spec, **task_definition}
+            generated_tasks.append(enhanced_task)
+
+        self.logger.info(
+            f"Successfully generated {len(generated_tasks)} task definitions"
+        )
+        return generated_tasks
+
+    def _create_task_generation_prompt(
+        self, task_spec: Dict[str, Any], project_spec: Dict[str, Any]
+    ) -> str:
+        """
+        Create a prompt for LLM task generation.
+
+        Args:
+            task_spec: Task specification with name, description, and agent
+            project_spec: Project specification with context
+
+        Returns:
+            Formatted prompt string for LLM
+        """
+        project_name = project_spec.get("project_name", "Unknown Project")
+        project_description = project_spec.get(
+            "description", "No description available"
+        )
+        domain = project_spec.get("domain", "general")
+        project_type = project_spec.get("project_type", "general")
+
+        task_name = task_spec.get("name", "Unknown Task")
+        task_description = task_spec.get("description", "No description available")
+        assigned_agent = task_spec.get("agent", "unknown")
+
+        # Get available agents for context
+        agents = project_spec.get("agents", [])
+        agent_context = ""
+        if agents:
+            agent_list = [
+                f"- {agent.get('role', agent.get('name', str(agent)))}"
+                for agent in agents
+                if isinstance(agent, dict)
+            ]
+            if agent_list:
+                agent_context = f"\n\nAvailable Agents:\n" + "\n".join(agent_list)
+
+        # Add additional context fields if they exist
+        additional_context = ""
+        context_fields = ["industry", "target_audience", "objectives"]
+        for field in context_fields:
+            if field in project_spec:
+                value = project_spec[field]
+                if isinstance(value, list):
+                    value = ", ".join(str(v) for v in value)
+                additional_context += f"\n- {field.replace('_', ' ').title()}: {value}"
+
+        if additional_context:
+            additional_context = f"\n\nAdditional Context:{additional_context}"
+
+        prompt = f"""You are an expert at creating CrewAI task configurations. Generate an intelligent task definition for a CrewAI project.
+
+Project Context:
+- Project Name: {project_name}
+- Description: {project_description}
+- Domain: {domain}
+- Type: {project_type}{additional_context}{agent_context}
+
+Task to Generate:
+- Name: {task_name}
+- Description: {task_description}
+- Assigned Agent: {assigned_agent}
+
+Requirements:
+1. Create a comprehensive, actionable task description that clearly defines what needs to be accomplished
+2. Specify detailed expected output that describes exactly what deliverables are required
+3. Provide relevant context items (as a list) that help the agent understand the task scope and priorities
+4. Suggest appropriate tools (as a list) that would be useful for completing this task
+5. Make the task definition specific to the project domain and aligned with project objectives
+
+Output Format:
+Return ONLY a valid JSON object with exactly these fields:
+{{
+    "description": "Comprehensive, actionable task description",
+    "expected_output": "Detailed specification of expected deliverables and output format",
+    "context": ["Context item 1", "Context item 2", "Context item 3"],
+    "tools": ["tool1", "tool2", "tool3"]
+}}
+
+Generate the task configuration now:"""
+
+        return prompt
+
     def render_agent_template(self, template_name: str, context: Dict[str, Any]) -> str:
         """
         Render an agent configuration template.
