@@ -58,7 +58,12 @@ class WorkflowContext:
 class WorkflowError(Exception):
     """Base exception for workflow orchestration errors."""
 
-    def __init__(self, message: str, step: Optional[str] = None, context: Optional[WorkflowContext] = None):
+    def __init__(
+        self,
+        message: str,
+        step: Optional[str] = None,
+        context: Optional[WorkflowContext] = None,
+    ):
         super().__init__(message)
         self.step = step
         self.context = context
@@ -98,7 +103,7 @@ class WorkflowOrchestrator:
         self.llm_client = LLMClient(
             provider=context.llm_provider,
             model=context.llm_model,
-            api_key=context.api_key
+            api_key=context.api_key,
         )
 
         # Initialize prompt templates
@@ -132,13 +137,15 @@ class WorkflowOrchestrator:
         except Exception as e:
             # Handle workflow failures
             await self._handle_workflow_error(context, e)
-            raise WorkflowError(f"Workflow execution failed: {str(e)}", context=context) from e
+            raise WorkflowError(
+                f"Workflow execution failed: {str(e)}", context=context
+            ) from e
 
     async def _step_process_prompt(self, context: WorkflowContext) -> None:
         """Step 1: Process natural language prompt into structured specification."""
         step = WorkflowStep(
             name="process_prompt",
-            description="Extract project specifications from natural language prompt"
+            description="Extract project specifications from natural language prompt",
         )
         context.steps.append(step)
 
@@ -149,7 +156,9 @@ class WorkflowOrchestrator:
 
             # Extract project specification from prompt
             if self.prompt_templates is None:
-                raise WorkflowError("Prompt templates not initialized", "process_prompt", context)
+                raise WorkflowError(
+                    "Prompt templates not initialized", "process_prompt", context
+                )
             spec = await self.prompt_templates.extract_project_spec(context.user_prompt)
 
             # Store result
@@ -164,13 +173,15 @@ class WorkflowOrchestrator:
             step.status = "failed"
             step.error = str(e)
             step.end_time = time.time()
-            raise WorkflowError(f"Prompt processing failed: {str(e)}", "process_prompt", context) from e
+            raise WorkflowError(
+                f"Prompt processing failed: {str(e)}", "process_prompt", context
+            ) from e
 
     async def _step_validate_specification(self, context: WorkflowContext) -> None:
         """Step 2: Validate project specification completeness."""
         step = WorkflowStep(
             name="validate_spec",
-            description="Validate project specification completeness and requirements"
+            description="Validate project specification completeness and requirements",
         )
         context.steps.append(step)
 
@@ -209,7 +220,7 @@ class WorkflowOrchestrator:
         """Step 3: Validate CrewAI dependencies and environment."""
         step = WorkflowStep(
             name="validate_dependencies",
-            description="Validate CrewAI CLI and dependencies"
+            description="Validate CrewAI CLI and dependencies",
         )
         context.steps.append(step)
 
@@ -223,16 +234,13 @@ class WorkflowOrchestrator:
                 raise WorkflowError(
                     "CrewAI CLI not available. Install with: pip install crewai",
                     "validate_dependencies",
-                    context
+                    context,
                 )
 
             # Validate project structure requirements
             if context.project_spec:
                 # Use basic validation for project structure
-                validation_result = ValidationResult(
-                    issues=[],
-                    completeness_score=1.0
-                )
+                validation_result = ValidationResult(issues=[], completeness_score=1.0)
 
                 # Check if output directory is valid
                 if not context.output_dir.exists():
@@ -246,17 +254,19 @@ class WorkflowOrchestrator:
                                     severity=IssueSeverity.ERROR,
                                     message=f"Cannot create output directory: {str(e)}",
                                     field_path="output_dir",
-                                    suggestions=["Choose a different output directory or check permissions"]
+                                    suggestions=[
+                                        "Choose a different output directory or check permissions"
+                                    ],
                                 )
                             ],
-                            completeness_score=0.0
+                            completeness_score=0.0,
                         )
 
                 if not validation_result.is_valid:
                     raise WorkflowError(
                         f"Project structure validation failed: {len(validation_result.errors)} errors",
                         "validate_dependencies",
-                        context
+                        context,
                     )
 
             step.status = "completed"
@@ -273,7 +283,7 @@ class WorkflowOrchestrator:
         """Step 4: Generate CrewAI project structure."""
         step = WorkflowStep(
             name="generate_project",
-            description="Generate CrewAI project structure and files"
+            description="Generate CrewAI project structure and files",
         )
         context.steps.append(step)
 
@@ -283,13 +293,15 @@ class WorkflowOrchestrator:
             self.progress.update_progress("Generating project", 6)
 
             # Create the project using CrewAI CLI
-            result = self.scaffolder.create_crew(context.project_name, context.output_dir)
+            result = self.scaffolder.create_crew(
+                context.project_name, context.output_dir
+            )
 
             if not result["success"]:
                 raise WorkflowError(
                     f"Project generation failed: {result.get('error', 'Unknown error')}",
                     "generate_project",
-                    context
+                    context,
                 )
 
             context.scaffold_result = result
@@ -305,7 +317,9 @@ class WorkflowOrchestrator:
             step.end_time = time.time()
             raise
 
-    async def _handle_workflow_error(self, context: WorkflowContext, error: Exception) -> None:
+    async def _handle_workflow_error(
+        self, context: WorkflowContext, error: Exception
+    ) -> None:
         """Handle workflow execution errors with cleanup and recovery."""
         # Mark current step as failed
         if context.steps and context.steps[-1].status == "running":
@@ -321,8 +335,10 @@ class WorkflowOrchestrator:
             "error_type": type(error).__name__,
             "error_message": str(error),
             "current_step": context.steps[-1].name if context.steps else None,
-            "completed_steps": len([s for s in context.steps if s.status == "completed"]),
-            "total_steps": len(context.steps)
+            "completed_steps": len(
+                [s for s in context.steps if s.status == "completed"]
+            ),
+            "total_steps": len(context.steps),
         }
 
         # Could implement rollback logic here if needed
@@ -336,7 +352,11 @@ class WorkflowOrchestrator:
 
         if context.steps:
             # Get steps with timing information
-            timed_steps = [s for s in context.steps if s.start_time is not None and s.end_time is not None]
+            timed_steps = [
+                s
+                for s in context.steps
+                if s.start_time is not None and s.end_time is not None
+            ]
             if timed_steps:
                 start_time = min(s.start_time for s in timed_steps)
                 end_time = max(s.end_time for s in timed_steps)
@@ -353,9 +373,11 @@ class WorkflowOrchestrator:
                     "name": s.name,
                     "description": s.description,
                     "status": s.status,
-                    "duration": s.end_time - s.start_time if s.start_time and s.end_time else 0,
-                    "error": s.error
+                    "duration": (
+                        s.end_time - s.start_time if s.start_time and s.end_time else 0
+                    ),
+                    "error": s.error,
                 }
                 for s in context.steps
-            ]
+            ],
         }

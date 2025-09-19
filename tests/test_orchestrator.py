@@ -43,7 +43,7 @@ class TestWorkflowOrchestrator:
             project_name="research-team",
             output_dir=tmp_path / "output",
             llm_provider="openai",
-            llm_model="gpt-3.5-turbo"
+            llm_model="gpt-3.5-turbo",
         )
 
     @pytest.fixture
@@ -57,23 +57,23 @@ class TestWorkflowOrchestrator:
                     "role": "researcher",
                     "goal": "Research topics thoroughly",
                     "backstory": "Expert researcher",
-                    "tools": ["search", "analyze"]
+                    "tools": ["search", "analyze"],
                 },
                 {
                     "role": "writer",
                     "goal": "Write high-quality content",
                     "backstory": "Professional writer",
-                    "tools": ["write", "edit"]
-                }
+                    "tools": ["write", "edit"],
+                },
             ],
             "tasks": [
                 {
                     "description": "Research the given topic",
                     "expected_output": "Research report",
-                    "agent": "researcher"
+                    "agent": "researcher",
                 }
             ],
-            "dependencies": ["crewai", "openai"]
+            "dependencies": ["crewai", "openai"],
         }
 
     def test_initialization(self, orchestrator):
@@ -96,11 +96,15 @@ class TestWorkflowOrchestrator:
         assert orchestrator.llm_client.model == "gpt-3.5-turbo"
 
     @pytest.mark.asyncio
-    async def test_step_process_prompt_success(self, orchestrator, sample_context, sample_project_spec):
+    async def test_step_process_prompt_success(
+        self, orchestrator, sample_context, sample_project_spec
+    ):
         """Test successful prompt processing step."""
         # Setup mocks
         orchestrator._initialize_components(sample_context)
-        orchestrator.prompt_templates.extract_project_spec = AsyncMock(return_value=sample_project_spec)
+        orchestrator.prompt_templates.extract_project_spec = AsyncMock(
+            return_value=sample_project_spec
+        )
         orchestrator.prompt_templates.validate_project_spec = Mock()
 
         # Execute step
@@ -119,7 +123,9 @@ class TestWorkflowOrchestrator:
         """Test prompt processing step failure."""
         # Setup mocks
         orchestrator._initialize_components(sample_context)
-        orchestrator.prompt_templates.extract_project_spec = AsyncMock(side_effect=LLMError("API Error"))
+        orchestrator.prompt_templates.extract_project_spec = AsyncMock(
+            side_effect=LLMError("API Error")
+        )
 
         # Execute step and expect error
         with pytest.raises(WorkflowError) as exc_info:
@@ -133,16 +139,15 @@ class TestWorkflowOrchestrator:
         assert exc_info.value.step == "process_prompt"
 
     @pytest.mark.asyncio
-    async def test_step_validate_specification_success(self, orchestrator, sample_context, sample_project_spec):
+    async def test_step_validate_specification_success(
+        self, orchestrator, sample_context, sample_project_spec
+    ):
         """Test successful specification validation."""
         # Setup context
         sample_context.project_spec = sample_project_spec
 
         # Mock validator
-        mock_result = ValidationResult(
-            issues=[],
-            completeness_score=0.95
-        )
+        mock_result = ValidationResult(issues=[], completeness_score=0.95)
         orchestrator.spec_validator.validate = Mock(return_value=mock_result)
 
         # Execute step
@@ -156,7 +161,9 @@ class TestWorkflowOrchestrator:
         assert sample_context.validation_result == mock_result
 
     @pytest.mark.asyncio
-    async def test_step_validate_specification_with_errors(self, orchestrator, sample_context, sample_project_spec):
+    async def test_step_validate_specification_with_errors(
+        self, orchestrator, sample_context, sample_project_spec
+    ):
         """Test specification validation with errors."""
         # Setup context
         sample_context.project_spec = sample_project_spec
@@ -167,10 +174,10 @@ class TestWorkflowOrchestrator:
                 ValidationIssue(
                     severity=IssueSeverity.ERROR,
                     message="Missing required field",
-                    field_path="agents[0].goal"
+                    field_path="agents[0].goal",
                 )
             ],
-            completeness_score=0.5
+            completeness_score=0.5,
         )
         orchestrator.spec_validator.validate = Mock(return_value=mock_result)
 
@@ -182,7 +189,9 @@ class TestWorkflowOrchestrator:
         assert "Critical validation errors" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_step_validate_dependencies_success(self, orchestrator, sample_context, sample_project_spec, tmp_path):
+    async def test_step_validate_dependencies_success(
+        self, orchestrator, sample_context, sample_project_spec, tmp_path
+    ):
         """Test successful dependency validation."""
         # Setup context
         sample_context.project_spec = sample_project_spec
@@ -201,7 +210,9 @@ class TestWorkflowOrchestrator:
         assert step.status == "completed"
 
     @pytest.mark.asyncio
-    async def test_step_validate_dependencies_crewai_missing(self, orchestrator, sample_context):
+    async def test_step_validate_dependencies_crewai_missing(
+        self, orchestrator, sample_context
+    ):
         """Test dependency validation when CrewAI is missing."""
         # Mock scaffolder
         orchestrator.scaffolder.check_crewai_available = Mock(return_value=False)
@@ -214,16 +225,15 @@ class TestWorkflowOrchestrator:
         assert "CrewAI CLI not available" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_step_generate_project_success(self, orchestrator, sample_context, tmp_path):
+    async def test_step_generate_project_success(
+        self, orchestrator, sample_context, tmp_path
+    ):
         """Test successful project generation."""
         # Setup context
         sample_context.output_dir = tmp_path
 
         # Mock scaffolder
-        mock_result = {
-            "success": True,
-            "project_path": tmp_path / "test-project"
-        }
+        mock_result = {"success": True, "project_path": tmp_path / "test-project"}
         orchestrator.scaffolder.create_crew = Mock(return_value=mock_result)
 
         # Execute step
@@ -240,10 +250,7 @@ class TestWorkflowOrchestrator:
     async def test_step_generate_project_failure(self, orchestrator, sample_context):
         """Test project generation failure."""
         # Mock scaffolder
-        mock_result = {
-            "success": False,
-            "error": "Scaffolding failed"
-        }
+        mock_result = {"success": False, "error": "Scaffolding failed"}
         orchestrator.scaffolder.create_crew = Mock(return_value=mock_result)
 
         # Execute step and expect error
@@ -254,17 +261,21 @@ class TestWorkflowOrchestrator:
         assert "Project generation failed" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_execute_workflow_success(self, orchestrator, sample_context, sample_project_spec, tmp_path):
+    async def test_execute_workflow_success(
+        self, orchestrator, sample_context, sample_project_spec, tmp_path
+    ):
         """Test complete successful workflow execution."""
         # Setup context
         sample_context.output_dir = tmp_path
 
         # Mock all components to avoid actual LLM calls
-        with patch.object(orchestrator, '_initialize_components'), \
-             patch.object(orchestrator, '_step_process_prompt') as mock_process, \
-             patch.object(orchestrator, '_step_validate_specification') as mock_validate, \
-             patch.object(orchestrator, '_step_validate_dependencies') as mock_deps, \
-             patch.object(orchestrator, '_step_generate_project') as mock_generate:
+        with (
+            patch.object(orchestrator, "_initialize_components"),
+            patch.object(orchestrator, "_step_process_prompt") as mock_process,
+            patch.object(orchestrator, "_step_validate_specification") as mock_validate,
+            patch.object(orchestrator, "_step_validate_dependencies") as mock_deps,
+            patch.object(orchestrator, "_step_generate_project") as mock_generate,
+        ):
 
             # Setup successful mocks
             mock_process.return_value = None
@@ -289,7 +300,9 @@ class TestWorkflowOrchestrator:
         """Test workflow execution with step failure."""
         # Setup mocks to fail at prompt processing
         orchestrator._initialize_components(sample_context)
-        orchestrator.prompt_templates.extract_project_spec = AsyncMock(side_effect=LLMError("API Error"))
+        orchestrator.prompt_templates.extract_project_spec = AsyncMock(
+            side_effect=LLMError("API Error")
+        )
 
         # Execute workflow and expect error
         with pytest.raises(WorkflowError):
@@ -299,12 +312,15 @@ class TestWorkflowOrchestrator:
         assert len(sample_context.steps) >= 1
         failed_step = sample_context.steps[0]
         assert failed_step.status == "failed"
-        assert "API Error" in failed_step.error or "Failed to extract" in failed_step.error
+        assert (
+            "API Error" in failed_step.error or "Failed to extract" in failed_step.error
+        )
 
     def test_get_workflow_summary_success(self, orchestrator, sample_context):
         """Test workflow summary generation for successful workflow."""
         # Setup completed steps
         import time
+
         start_time = time.time()
         end_time = start_time + 2.5
 
@@ -371,7 +387,7 @@ class TestWorkflowOrchestrator:
             output_dir=tmp_path / "output",
             llm_provider="anthropic",
             llm_model="claude-3-sonnet-20240229",
-            api_key="test-key"
+            api_key="test-key",
         )
 
         assert context.user_prompt == "Test prompt"
@@ -385,12 +401,13 @@ class TestWorkflowOrchestrator:
     def test_workflow_step_creation(self):
         """Test WorkflowStep creation and properties."""
         import time
+
         start = time.time()
         step = WorkflowStep(
             name="test_step",
             description="Test step description",
             status="running",
-            start_time=start
+            start_time=start,
         )
 
         assert step.name == "test_step"
@@ -418,7 +435,7 @@ class TestWorkflowError:
         context = WorkflowContext(
             user_prompt="Test prompt",
             project_name="test-project",
-            output_dir=tmp_path / "output"
+            output_dir=tmp_path / "output",
         )
         error = WorkflowError("Test error", "test_step", context)
 
@@ -439,17 +456,19 @@ class TestIntegrationWorkflow:
             user_prompt="Create a simple blog writing team",
             project_name="blog-team",
             output_dir=tmp_path / "projects",
-            llm_provider="openai"
+            llm_provider="openai",
         )
 
         orchestrator = WorkflowOrchestrator()
 
         # Mock all external dependencies
-        with patch.object(orchestrator, '_initialize_components'), \
-             patch.object(orchestrator, '_step_process_prompt') as mock_process, \
-             patch.object(orchestrator, '_step_validate_specification') as mock_validate, \
-             patch.object(orchestrator, '_step_validate_dependencies') as mock_deps, \
-             patch.object(orchestrator, '_step_generate_project') as mock_generate:
+        with (
+            patch.object(orchestrator, "_initialize_components"),
+            patch.object(orchestrator, "_step_process_prompt") as mock_process,
+            patch.object(orchestrator, "_step_validate_specification") as mock_validate,
+            patch.object(orchestrator, "_step_validate_dependencies") as mock_deps,
+            patch.object(orchestrator, "_step_generate_project") as mock_generate,
+        ):
 
             # Setup successful mocks
             mock_process.return_value = None
@@ -475,18 +494,22 @@ class TestIntegrationWorkflow:
         context = WorkflowContext(
             user_prompt="Test prompt",
             project_name="test-project",
-            output_dir=tmp_path / "output"
+            output_dir=tmp_path / "output",
         )
 
         orchestrator = WorkflowOrchestrator()
 
         # Mock failure at validation step
-        with patch.object(orchestrator, '_initialize_components'), \
-             patch.object(orchestrator, '_step_process_prompt') as mock_process, \
-             patch.object(orchestrator, '_step_validate_specification') as mock_validate:
+        with (
+            patch.object(orchestrator, "_initialize_components"),
+            patch.object(orchestrator, "_step_process_prompt") as mock_process,
+            patch.object(orchestrator, "_step_validate_specification") as mock_validate,
+        ):
 
             mock_process.return_value = None
-            mock_validate.side_effect = WorkflowError("Validation failed", "validate_spec", context)
+            mock_validate.side_effect = WorkflowError(
+                "Validation failed", "validate_spec", context
+            )
 
             # Execute workflow and expect error
             with pytest.raises(WorkflowError):
