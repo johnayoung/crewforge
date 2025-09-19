@@ -1,0 +1,19 @@
+# Content Team Agent Configuration Template
+# Optimized for content creation teams with researchers and writers
+# Variables: agents, project.enhanced_* values
+
+researcher:
+  role: {{ agents.researcher.role }}
+  goal: >
+    {{ project.enhanced_research_goal }}
+  backstory: >
+    {{ project.enhanced_research_backstory }}
+  tools: {{ project.research_tools | tojson }}
+
+writer:
+  role: {{ agents.writer.role }}
+  goal: >
+    {{ project.enhanced_writing_goal }}
+  backstory: >
+    {{ project.enhanced_writing_backstory }}
+  tools: {{ project.writing_tools | tojson }}

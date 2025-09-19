@@ -1,0 +1,53 @@
+# Default Agent Configuration Template
+# This template provides basic agent configuration structure
+# Variables available: agents (original agents dict), project (project metadata), enhanced_* (enhancement data)
+
+{% if agents %}
+{% for agent_key, agent_data in agents.items() %}
+{{ agent_key }}:
+  role: {{ agent_data.role }}
+  goal: >
+    {% if enhanced_goals and enhanced_goals.get(agent_key) %}
+    {{ enhanced_goals[agent_key] }}
+    {% else %}
+    {{ agent_data.goal }}
+    {% endif %}
+  backstory: >
+    {% if enhanced_backstories and enhanced_backstories.get(agent_key) %}
+    {{ enhanced_backstories[agent_key] }}
+    {% else %}
+    {{ agent_data.backstory }}
+    {% endif %}
+  tools:
+    {% if enhanced_tools and enhanced_tools.get(agent_key) %}
+    {% for tool in enhanced_tools[agent_key] %}
+    - {{ tool }}
+    {% endfor %}
+    {% else %}
+    {% for tool in agent_data.tools %}
+    - {{ tool }}
+    {% endfor %}
+    {% endif %}
+  {% if enhanced_attributes and enhanced_attributes.get(agent_key) %}
+  {% for attr_key, attr_value in enhanced_attributes[agent_key].items() %}
+  {{ attr_key }}: {{ attr_value }}
+  {% endfor %}
+  {% endif %}
+
+{% endfor %}
+{% elif agent %}
+# Single agent mode
+{{ agent.role | lower | replace(' ', '_') }}:
+  role: {{ agent.role }}
+  goal: >
+    {{ agent.goal }}
+  backstory: >
+    {{ agent.backstory }}
+  tools:
+    {% for tool in agent.tools %}
+    - {{ tool }}
+    {% endfor %}
+{% else %}
+# No agent data provided
+# Please provide either 'agents' (dict) or 'agent' (single agent) in the context
+{% endif %}

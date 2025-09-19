@@ -1,0 +1,48 @@
+# Default Task Configuration Template  
+# This template provides basic task configuration structure
+# Variables available: tasks (original tasks dict), project (project metadata), enhanced_* (enhancement data)
+
+{% if tasks %}
+{% for task_key, task_data in tasks.items() %}
+{{ task_key }}:
+  description: >
+    {% if enhanced_descriptions and enhanced_descriptions.get(task_key) %}
+    {{ enhanced_descriptions[task_key] }}
+    {% else %}
+    {{ task_data.description }}
+    {% endif %}
+  expected_output: >
+    {% if enhanced_outputs and enhanced_outputs.get(task_key) %}
+    {{ enhanced_outputs[task_key] }}
+    {% else %}
+    {{ task_data.expected_output }}
+    {% endif %}
+  agent: {{ task_data.agent }}
+  {% if enhanced_contexts and enhanced_contexts.get(task_key) %}
+  context: {{ enhanced_contexts[task_key] }}
+  {% endif %}
+  {% if enhanced_dependencies and enhanced_dependencies.get(task_key) %}
+  dependencies:
+    {% for dep in enhanced_dependencies[task_key] %}
+    - {{ dep }}
+    {% endfor %}
+  {% endif %}
+  {% if enhanced_attributes and enhanced_attributes.get(task_key) %}
+  {% for attr_key, attr_value in enhanced_attributes[task_key].items() %}
+  {{ attr_key }}: {{ attr_value }}
+  {% endfor %}
+  {% endif %}
+
+{% endfor %}
+{% elif task %}
+# Single task mode
+{{ task.description | lower | replace(' ', '_') }}:
+  description: >
+    {{ task.description }}
+  expected_output: >
+    {{ task.expected_output }}
+  agent: {{ task.agent }}
+{% else %}
+# No task data provided
+# Please provide either 'tasks' (dict) or 'task' (single task) in the context
+{% endif %}

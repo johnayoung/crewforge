@@ -18,6 +18,14 @@ from pathlib import Path
 from typing import Dict, Optional, Any, Tuple, List
 import logging
 
+# Import enhancement engine for project customization
+try:
+    from .enhancement import EnhancementEngine, EnhancementError
+except ImportError:
+    # Handle import error gracefully during testing
+    EnhancementEngine = None
+    EnhancementError = Exception
+
 
 class CrewAIError(Exception):
     """Exception raised for CrewAI CLI execution errors."""
@@ -1563,3 +1571,164 @@ class CrewAIScaffolder:
             health_result["issues"].append(f"Health check failed: {str(e)}")
 
         return health_result
+
+    def create_crew_with_enhancement(
+        self,
+        project_name: str,
+        target_directory: Path,
+        enhancement_context: Optional[Dict[str, Any]] = None,
+        template_name: str = "default",
+        min_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a CrewAI project and enhance it with intelligent configurations.
+
+        This method combines the native CrewAI scaffolding with the enhancement
+        engine to provide domain-specific customizations.
+
+        Args:
+            project_name: Name of the crew project to create
+            target_directory: Directory where the project should be created
+            enhancement_context: Context data for template rendering
+            template_name: Name of template to use for enhancement
+            min_version: Optional minimum CrewAI version requirement
+
+        Returns:
+            Dictionary containing execution results and enhancement information
+
+        Raises:
+            CrewAIError: If CrewAI CLI execution fails or is not available
+            EnhancementError: If enhancement fails
+        """
+        if EnhancementEngine is None:
+            # Fallback to basic creation if enhancement engine not available
+            self.logger.warning(
+                "Enhancement engine not available, using basic scaffolding"
+            )
+            return self.create_crew(project_name, target_directory, min_version)
+
+        # Step 1: Create basic project structure
+        scaffold_result = self.create_crew(project_name, target_directory, min_version)
+
+        if not scaffold_result.get("success", False):
+            return scaffold_result
+
+        # Step 2: Enhancement phase
+        if not enhancement_context:
+            # No enhancement requested, return scaffolding result
+            scaffold_result["enhancement"] = {
+                "attempted": False,
+                "reason": "No enhancement context provided",
+            }
+            return scaffold_result
+
+        try:
+            # Initialize enhancement engine
+            enhancement_engine = EnhancementEngine(logger=self.logger)
+            project_path = scaffold_result["project_path"]
+
+            self.logger.info(f"Enhancing project with template '{template_name}'")
+
+            # Enhance agents configuration
+            agents_result = enhancement_engine.enhance_agents_config(
+                project_path, enhancement_context, template_name
+            )
+
+            # Enhance tasks configuration
+            tasks_result = enhancement_engine.enhance_tasks_config(
+                project_path, enhancement_context, template_name
+            )
+
+            enhancement_summary = {
+                "attempted": True,
+                "agents_enhanced": agents_result.get("success", False),
+                "tasks_enhanced": tasks_result.get("success", False),
+                "template_used": template_name,
+                "errors": [],
+            }
+
+            # Collect any enhancement errors
+            if not agents_result.get("success", False):
+                enhancement_summary["errors"].append(
+                    f"Agents enhancement failed: {agents_result.get('error', 'Unknown error')}"
+                )
+
+            if not tasks_result.get("success", False):
+                enhancement_summary["errors"].append(
+                    f"Tasks enhancement failed: {tasks_result.get('error', 'Unknown error')}"
+                )
+
+            # Overall enhancement success
+            enhancement_summary["success"] = agents_result.get(
+                "success", False
+            ) and tasks_result.get("success", False)
+
+            if enhancement_summary["success"]:
+                self.logger.info(
+                    f"Successfully enhanced project '{project_name}' with template '{template_name}'"
+                )
+            else:
+                self.logger.warning(
+                    f"Partial enhancement of project '{project_name}': {enhancement_summary['errors']}"
+                )
+
+            # Add enhancement details to the result
+            scaffold_result["enhancement"] = enhancement_summary
+            scaffold_result["agents_backup"] = agents_result.get("backup_file")
+            scaffold_result["tasks_backup"] = tasks_result.get("backup_file")
+
+            return scaffold_result
+
+        except EnhancementError as e:
+            self.logger.error(
+                f"Enhancement failed for project '{project_name}': {str(e)}"
+            )
+            scaffold_result["enhancement"] = {
+                "attempted": True,
+                "success": False,
+                "error": str(e),
+                "agents_enhanced": False,
+                "tasks_enhanced": False,
+            }
+            return scaffold_result
+
+        except Exception as e:
+            self.logger.error(f"Unexpected error during enhancement: {str(e)}")
+            scaffold_result["enhancement"] = {
+                "attempted": True,
+                "success": False,
+                "error": f"Unexpected enhancement error: {str(e)}",
+                "agents_enhanced": False,
+                "tasks_enhanced": False,
+            }
+            return scaffold_result
+
+    def get_available_enhancement_templates(
+        self, category: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get available enhancement templates by category.
+
+        Args:
+            category: Optional category filter ('agents' or 'tasks')
+
+        Returns:
+            Dictionary mapping categories to lists of available templates or error information
+        """
+        if EnhancementEngine is None:
+            return {"error": "Enhancement engine not available"}
+
+        try:
+            enhancement_engine = EnhancementEngine(logger=self.logger)
+
+            if category:
+                return {category: enhancement_engine.get_available_templates(category)}
+            else:
+                return {
+                    "agents": enhancement_engine.get_available_templates("agents"),
+                    "tasks": enhancement_engine.get_available_templates("tasks"),
+                }
+
+        except Exception as e:
+            self.logger.error(f"Failed to get available templates: {str(e)}")
+            return {"error": str(e)}

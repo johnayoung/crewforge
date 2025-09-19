@@ -1,0 +1,38 @@
+# Data Analysis Team Task Configuration Template
+# Optimized for data science workflows with analysis and modeling tasks
+# Variables: tasks, project.enhanced_* values
+
+data_collection:
+  description: >
+    {{ project.enhanced_collection_description or "Collect and validate data from multiple sources ensuring quality and completeness" }}
+  expected_output: >
+    {{ project.enhanced_collection_output or "Clean, validated dataset with comprehensive data quality report" }}
+  agent: data_engineer
+  context: {{ project.domain_context or "Enterprise data analytics project" }}
+
+analysis:
+  description: >
+    {{ project.enhanced_analysis_description or "Perform exploratory data analysis and statistical testing to identify patterns and insights" }}
+  expected_output: >
+    {{ project.enhanced_analysis_output or "Detailed analytical report with visualizations and statistical findings" }}
+  agent: data_analyst
+  context: {{ project.domain_context or "Enterprise data analytics project" }}
+  dependencies: [data_collection]
+
+modeling:
+  description: >
+    {{ project.enhanced_modeling_description or "Develop and validate machine learning models for predictive analytics" }}
+  expected_output: >
+    {{ project.enhanced_modeling_output or "Trained ML model with performance metrics and validation results" }}
+  agent: ml_engineer
+  context: {{ project.domain_context or "Enterprise data analytics project" }}
+  dependencies: [analysis]
+
+deployment:
+  description: >
+    {{ project.enhanced_deployment_description or "Deploy model to production with monitoring and alerting systems" }}
+  expected_output: >
+    {{ project.enhanced_deployment_output or "Production-ready model deployment with monitoring dashboard" }}
+  agent: ml_engineer
+  context: {{ project.domain_context or "Enterprise data analytics project" }}
+  dependencies: [modeling]

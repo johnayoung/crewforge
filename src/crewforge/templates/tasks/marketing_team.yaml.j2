@@ -1,0 +1,38 @@
+# Marketing Team Task Configuration Template
+# Optimized for marketing campaign workflows and performance tracking
+# Variables: tasks, project.enhanced_* values
+
+strategy_development:
+  description: >
+    {{ project.enhanced_strategy_description or "Develop comprehensive marketing strategy with audience segmentation and channel selection" }}
+  expected_output: >
+    {{ project.enhanced_strategy_output or "Detailed marketing strategy document with target personas and campaign roadmap" }}
+  agent: marketing_strategist
+  context: {{ project.domain_context or "Digital marketing campaign launch" }}
+
+content_production:
+  description: >
+    {{ project.enhanced_content_description or "Create engaging content assets across multiple formats and channels" }}
+  expected_output: >
+    {{ project.enhanced_content_output or "Complete content package including blog posts, videos, social media assets, and email templates" }}
+  agent: content_creator
+  context: {{ project.domain_context or "Digital marketing campaign launch" }}
+  dependencies: [strategy_development]
+
+campaign_launch:
+  description: >
+    {{ project.enhanced_launch_description or "Execute multi-channel marketing campaign with coordinated messaging and timing" }}
+  expected_output: >
+    {{ project.enhanced_launch_output or "Live marketing campaign across all selected channels with tracking and monitoring enabled" }}
+  agent: marketing_strategist
+  context: {{ project.domain_context or "Digital marketing campaign launch" }}
+  dependencies: [content_production]
+
+performance_monitoring:
+  description: >
+    {{ project.enhanced_monitoring_description or "Track campaign performance metrics and provide optimization recommendations" }}
+  expected_output: >
+    {{ project.enhanced_monitoring_output or "Weekly performance reports with KPI analysis and actionable optimization recommendations" }}
+  agent: performance_analyst
+  context: {{ project.domain_context or "Digital marketing campaign launch" }}
+  dependencies: [campaign_launch]

@@ -1,0 +1,20 @@
+# Content Team Task Configuration Template  
+# Optimized for content creation workflows with research and writing tasks
+# Variables: tasks, project.enhanced_* values
+
+research:
+  description: >
+    {{ project.enhanced_research_description }}
+  expected_output: >
+    {{ project.enhanced_research_output }}
+  agent: researcher
+  context: {{ project.domain_context }}
+
+write:
+  description: >
+    {{ project.enhanced_writing_description }}
+  expected_output: >
+    {{ project.enhanced_writing_output }}
+  agent: writer
+  context: {{ project.domain_context }}
+  dependencies: [research]
