@@ -10,6 +10,7 @@ import click
 from pydantic import ValidationError
 
 from crewforge.models import GenerationRequest
+from crewforge.core.scaffolding import ProjectScaffolder, ScaffoldingError
 
 
 def validate_prompt(prompt: str) -> str:
@@ -254,18 +255,34 @@ def generate(prompt: str, name: Optional[str] = None):
         except ValidationError as e:
             raise click.ClickException(f"Validation error: {e}")
 
-        # Step 4: Progress feedback for generation process
-        click.echo("🤖 Analyzing prompt for crew requirements...")
-        click.echo("🧠 Generating agent configurations...")
-        click.echo("📋 Creating task definitions...")
-        click.echo("🔧 Selecting appropriate tools...")
-        click.echo("🔗 Wiring agents, tasks, and tools...")
+        # Step 4: Initialize project scaffolder
+        click.echo("🔧 Initializing project scaffolder...")
+        try:
+            scaffolder = ProjectScaffolder()
+            click.echo("✅ Scaffolder ready")
+        except Exception as e:
+            raise click.ClickException(f"Failed to initialize scaffolder: {e}")
 
-        # Step 5: Project creation (placeholder for now)
-        project_path = Path.cwd() / validated_name
-        click.echo(f"📦 Creating CrewAI project structure...")
-        click.echo("🎯 Populating project files...")
-        click.echo("✅ Validating generated project...")
+        # Step 5: Generate complete CrewAI project
+        click.echo("")
+        click.echo("🤖 Analyzing prompt for crew requirements...")
+        
+        try:
+            # Generate the complete project using scaffolding
+            current_dir = Path.cwd()
+            project_path = scaffolder.generate_project(generation_request, current_dir)
+            
+            click.echo("🧠 Generated agent configurations")
+            click.echo("📋 Created task definitions")
+            click.echo("🔧 Selected appropriate tools")
+            click.echo("� Created CrewAI project structure")
+            click.echo("🎯 Populated project files")
+            click.echo("✅ Project generation completed")
+            
+        except ScaffoldingError as e:
+            raise click.ClickException(f"Project generation failed: {e}")
+        except Exception as e:
+            raise click.ClickException(f"Unexpected error during generation: {e}")
 
         # Success confirmation
         click.echo("")
@@ -275,12 +292,11 @@ def generate(prompt: str, name: Optional[str] = None):
         click.echo("")
         click.echo("Next steps:")
         click.echo(f"  cd {validated_name}")
+        click.echo("  # Install dependencies (if needed)")
         click.echo("  # Review and customize the generated agents and tasks")
         click.echo("  # Run your CrewAI project")
         click.echo("")
-        click.echo(
-            "Note: Full implementation is in progress. Core functionality coming soon!"
-        )
+        click.echo("Your CrewAI project is ready to use!")
 
     except click.ClickException:
         # Re-raise Click exceptions as-is
