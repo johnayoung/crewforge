@@ -275,6 +275,7 @@ class TestWorkflowOrchestrator:
             patch.object(orchestrator, "_step_validate_specification") as mock_validate,
             patch.object(orchestrator, "_step_validate_dependencies") as mock_deps,
             patch.object(orchestrator, "_step_generate_project") as mock_generate,
+            patch.object(orchestrator, "_step_setup_dependencies") as mock_setup_deps,
         ):
 
             # Setup successful mocks
@@ -282,6 +283,7 @@ class TestWorkflowOrchestrator:
             mock_validate.return_value = None
             mock_deps.return_value = None
             mock_generate.return_value = None
+            mock_setup_deps.return_value = None
 
             # Execute workflow
             result = await orchestrator.execute_workflow(sample_context)
@@ -291,6 +293,7 @@ class TestWorkflowOrchestrator:
             mock_validate.assert_called_once()
             mock_deps.assert_called_once()
             mock_generate.assert_called_once()
+            mock_setup_deps.assert_called_once()
 
             # Verify result
             assert result == sample_context
@@ -468,6 +471,7 @@ class TestIntegrationWorkflow:
             patch.object(orchestrator, "_step_validate_specification") as mock_validate,
             patch.object(orchestrator, "_step_validate_dependencies") as mock_deps,
             patch.object(orchestrator, "_step_generate_project") as mock_generate,
+            patch.object(orchestrator, "_step_setup_dependencies") as mock_setup_deps,
         ):
 
             # Setup successful mocks
@@ -475,6 +479,7 @@ class TestIntegrationWorkflow:
             mock_validate.return_value = None
             mock_deps.return_value = None
             mock_generate.return_value = None
+            mock_setup_deps.return_value = None
 
             # Execute workflow
             result = await orchestrator.execute_workflow(context)
@@ -484,6 +489,7 @@ class TestIntegrationWorkflow:
             mock_validate.assert_called_once()
             mock_deps.assert_called_once()
             mock_generate.assert_called_once()
+            mock_setup_deps.assert_called_once()
 
             # Verify result
             assert result == context

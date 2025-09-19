@@ -24,6 +24,7 @@ from crewforge.validation import (
 )
 from crewforge.scaffolder import CrewAIScaffolder, CrewAIError
 from crewforge.progress import ProgressIndicator, StatusDisplay
+from crewforge.dependency_manager import DependencyManager, DependencyError
 
 
 @dataclass
@@ -96,6 +97,7 @@ class WorkflowOrchestrator:
         self.llm_client = None
         self.prompt_templates = None
         self.scaffolder = CrewAIScaffolder()
+        self.dependency_manager = DependencyManager()
 
     def _initialize_components(self, context: WorkflowContext) -> None:
         """Initialize workflow components with context configuration."""
@@ -131,6 +133,7 @@ class WorkflowOrchestrator:
             await self._step_validate_specification(context)
             await self._step_validate_dependencies(context)
             await self._step_generate_project(context)
+            await self._step_setup_dependencies(context)
 
             return context
 
@@ -310,6 +313,54 @@ class WorkflowOrchestrator:
             step.end_time = time.time()
 
             self.progress.update_progress("Project generated successfully", 7)
+
+        except Exception as e:
+            step.status = "failed"
+            step.error = str(e)
+            step.end_time = time.time()
+            raise
+
+    async def _step_setup_dependencies(self, context: WorkflowContext) -> None:
+        """Step 5: Set up project dependencies using uv."""
+        step = WorkflowStep(
+            name="setup_dependencies",
+            description="Set up project dependencies and virtual environment using uv",
+        )
+        context.steps.append(step)
+
+        try:
+            step.status = "running"
+            step.start_time = time.time()
+            self.progress.update_progress("Setting up dependencies", 8)
+
+            # Determine project path
+            project_path = context.output_dir / context.project_name
+
+            # Check if uv is available
+            if not self.dependency_manager.check_uv_available():
+                raise WorkflowError(
+                    "uv package manager not available. Install with: pip install uv",
+                    "setup_dependencies",
+                    context,
+                )
+
+            # Set up complete project environment
+            result = await self.dependency_manager.setup_project_environment(
+                project_path
+            )
+
+            if not result["success"]:
+                raise WorkflowError(
+                    f"Dependency setup failed: {result.get('message', 'Unknown error')}",
+                    "setup_dependencies",
+                    context,
+                )
+
+            step.output = result
+            step.status = "completed"
+            step.end_time = time.time()
+
+            self.progress.update_progress("Dependencies set up successfully", 9)
 
         except Exception as e:
             step.status = "failed"
