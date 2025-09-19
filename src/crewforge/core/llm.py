@@ -1,17 +1,17 @@
 """LiteLLM integration for multi-provider LLM access with retry logic and structured outputs."""
 
 import json
-import os
 import time
-from typing import Dict, Any, Optional, Union
-from pydantic import BaseModel, Field, validator
+from typing import Any
+
 import litellm
+from pydantic import BaseModel, Field, validator
 
 
 class LLMError(Exception):
     """Custom exception for LLM-related errors."""
 
-    def __init__(self, message: str, original_exception: Optional[Exception] = None):
+    def __init__(self, message: str, original_exception: Exception | None = None):
         super().__init__(message)
         self.original_exception = original_exception
 
@@ -25,13 +25,13 @@ class RetryConfig(BaseModel):
     exponential_base: float = Field(default=2.0, gt=1.0)
 
     @validator("max_delay")
-    def max_delay_must_be_positive(cls, v):
+    def max_delay_must_be_positive(cls, v: float) -> float:
         if v <= 0:
             raise ValueError("max_delay must be positive")
         return v
 
     @validator("base_delay")
-    def base_delay_must_be_non_negative(cls, v):
+    def base_delay_must_be_non_negative(cls, v: float) -> float:
         if v < 0:
             raise ValueError("base_delay must be non-negative")
         return v
@@ -40,9 +40,7 @@ class RetryConfig(BaseModel):
 class LLMClient:
     """Wrapper around LiteLLM for multi-provider LLM access with enhanced features."""
 
-    def __init__(
-        self, model: str = "gpt-4", retry_config: Optional[RetryConfig] = None
-    ):
+    def __init__(self, model: str = "gpt-4", retry_config: RetryConfig | None = None):
         """Initialize LLM client.
 
         Args:
@@ -60,7 +58,7 @@ class LLMClient:
         # Set up model routing and API key detection
         # LiteLLM automatically detects API keys from environment variables
         litellm.drop_params = True  # Drop unsupported parameters
-        litellm.set_verbose = False  # Reduce logging noise
+        # Note: litellm.set_verbose does not exist, using litellm logging configuration instead
 
     def generate(
         self,
@@ -68,8 +66,8 @@ class LLMClient:
         user_prompt: str,
         use_json_mode: bool = False,
         temperature: float = 0.1,
-        max_tokens: Optional[int] = None,
-    ) -> Union[str, Dict[str, Any]]:
+        max_tokens: int | None = None,
+    ) -> str | dict[str, Any]:
         """Generate response using LLM with retry logic.
 
         Args:
@@ -107,24 +105,38 @@ class LLMClient:
         return self._execute_with_retry(completion_args, use_json_mode)
 
     def _execute_with_retry(
-        self, completion_args: Dict[str, Any], parse_json: bool
-    ) -> Union[str, Dict[str, Any]]:
+        self, completion_args: dict[str, Any], parse_json: bool
+    ) -> str | dict[str, Any]:
         """Execute LLM call with exponential backoff retry logic."""
         last_exception = None
 
         for attempt in range(self.retry_config.max_attempts):
             try:
                 response = litellm.completion(**completion_args)
-                content = response.choices[0].message.content
+
+                # Handle response structure safely - type ignore needed for LiteLLM response types
+                if not hasattr(response, "choices") or not response.choices:  # type: ignore
+                    raise LLMError("Invalid response structure: no choices found")
+
+                choice = response.choices[0]  # type: ignore
+                if not hasattr(choice, "message") or not hasattr(choice.message, "content"):  # type: ignore
+                    raise LLMError(
+                        "Invalid response structure: no message content found"
+                    )
+
+                content = choice.message.content  # type: ignore
+                if content is None:
+                    raise LLMError("Empty response content received")
 
                 if parse_json:
                     try:
-                        return json.loads(content)
+                        parsed_result: dict[str, Any] = json.loads(content)
+                        return parsed_result
                     except json.JSONDecodeError as e:
                         raise LLMError(
                             f"Failed to parse JSON response: {content}",
                             original_exception=e,
-                        )
+                        ) from e
 
                 return content
 
@@ -211,7 +223,7 @@ Please provide a complete configuration that includes:
 Focus on creating a practical, production-ready crew that can accomplish the specified business objectives."""
 
 
-def parse_generation_response(response_data: Dict[str, Any]) -> Dict[str, Any]:
+def parse_generation_response(response_data: dict[str, Any]) -> dict[str, Any]:
     """Parse and validate LLM response for configuration completeness.
 
     Args:
