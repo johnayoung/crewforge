@@ -8,6 +8,7 @@ ensuring they are complete, valid, and suitable for CrewAI project generation.
 import re
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 
@@ -921,3 +922,551 @@ class SpecificationValidator:
         return ValidationResult(
             issues=self.issues.copy(), completeness_score=completeness_score
         )
+
+
+# Python File Validation Functions
+
+
+def validate_python_syntax(file_path: Union[str, Path]) -> ValidationResult:
+    """
+    Validate Python file syntax using AST parsing.
+
+    Args:
+        file_path: Path to Python file to validate
+
+    Returns:
+        ValidationResult with syntax validation issues
+    """
+    import ast
+    import sys
+    from pathlib import Path
+
+    file_path = Path(file_path)
+    issues: List[ValidationIssue] = []
+
+    # Check if file exists
+    if not file_path.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR, f"File not found: {file_path}", str(file_path)
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Check if path is actually a file
+    if not file_path.is_file():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR, f"Path is not a file: {file_path}", str(file_path)
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    try:
+        # Read file content
+        content = file_path.read_text(encoding="utf-8")
+
+        # Check for empty file
+        if not content.strip():
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Empty file: {file_path.name}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Parse with AST
+        try:
+            ast.parse(content, filename=str(file_path))
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"File has valid Python syntax: {file_path.name}",
+                    str(file_path),
+                )
+            )
+        except IndentationError as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Indentation error in {file_path.name} at line {e.lineno}: {e.msg}",
+                    str(file_path),
+                )
+            )
+        except SyntaxError as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Syntax error in {file_path.name} at line {e.lineno}: {e.msg}",
+                    str(file_path),
+                )
+            )
+        except Exception as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Parse error in {file_path.name}: {str(e)}",
+                    str(file_path),
+                )
+            )
+
+    except UnicodeDecodeError as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Encoding error in {file_path.name}: Cannot decode file as UTF-8",
+                str(file_path),
+            )
+        )
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Error reading {file_path.name}: {str(e)}",
+                str(file_path),
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def validate_python_imports(
+    file_path: Union[str, Path], project_root: Optional[str] = None
+) -> ValidationResult:
+    """
+    Validate Python imports in a file.
+
+    Args:
+        file_path: Path to Python file to validate
+        project_root: Root directory of the project for relative import resolution
+
+    Returns:
+        ValidationResult with import validation issues
+    """
+    import ast
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    file_path = Path(file_path)
+    issues: List[ValidationIssue] = []
+
+    # First validate syntax
+    syntax_result = validate_python_syntax(file_path)
+    if not syntax_result.is_valid:
+        # Return syntax errors - can't validate imports if syntax is broken
+        issues.extend(syntax_result.errors)
+        return ValidationResult(issues=issues)
+
+    try:
+        content = file_path.read_text(encoding="utf-8")
+
+        # Parse AST to extract imports
+        try:
+            tree = ast.parse(content, filename=str(file_path))
+        except Exception as e:
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"Failed to parse {file_path.name} for import analysis: {str(e)}",
+                    str(file_path),
+                )
+            )
+            return ValidationResult(issues=issues)
+
+        # Extract import statements
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imports.append(node.module)
+                    # Also check individual imported items if needed
+                    for alias in node.names:
+                        if alias.name != "*":
+                            imports.append(f"{node.module}.{alias.name}")
+
+        # Validate each import
+        valid_imports = 0
+        for import_name in imports:
+            if _is_valid_import(import_name, file_path, project_root):
+                valid_imports += 1
+            else:
+                # Check if it's a relative import issue
+                if import_name.startswith("."):
+                    issues.append(
+                        ValidationIssue(
+                            IssueSeverity.WARNING,
+                            f"Relative import '{import_name}' may not be resolvable: {file_path.name}",
+                            str(file_path),
+                        )
+                    )
+                else:
+                    issues.append(
+                        ValidationIssue(
+                            IssueSeverity.ERROR,
+                            f"Import '{import_name}' not found: {file_path.name}",
+                            str(file_path),
+                        )
+                    )
+
+        if (
+            valid_imports > 0
+            and len([i for i in issues if i.severity == IssueSeverity.ERROR]) == 0
+        ):
+            issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"Imports validated successfully in {file_path.name} ({valid_imports} imports checked)",
+                    str(file_path),
+                )
+            )
+
+    except Exception as e:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Error validating imports in {file_path.name}: {str(e)}",
+                str(file_path),
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def _is_valid_import(
+    import_name: str, file_path: Path, project_root: Optional[str] = None
+) -> bool:
+    """
+    Check if an import name is valid/resolvable.
+
+    Args:
+        import_name: Name of the import to validate
+        file_path: Path to the file containing the import
+        project_root: Root directory of the project
+
+    Returns:
+        True if import is valid, False otherwise
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    # Skip relative imports for now - they're complex to validate properly
+    if import_name.startswith("."):
+        return True
+
+    # Try to find the module spec
+    try:
+        spec = importlib.util.find_spec(import_name.split(".")[0])
+        return spec is not None
+    except (ImportError, AttributeError, ValueError, ModuleNotFoundError):
+        # Check if it might be a local module in the project
+        if project_root:
+            project_path = Path(project_root)
+            # Look for the module as a Python file or package
+            module_parts = import_name.split(".")
+
+            # Check for .py file
+            potential_file = project_path
+            for part in module_parts[:-1]:
+                potential_file = potential_file / part
+            potential_file = potential_file / f"{module_parts[-1]}.py"
+
+            if potential_file.exists():
+                return True
+
+            # Check for package (__init__.py)
+            potential_package = project_path
+            for part in module_parts:
+                potential_package = potential_package / part
+            potential_init = potential_package / "__init__.py"
+
+            if potential_init.exists():
+                return True
+
+        return False
+
+
+def validate_project_imports(project_root: str) -> ValidationResult:
+    """
+    Validate imports across an entire project.
+
+    Args:
+        project_root: Root directory of the project to validate
+
+    Returns:
+        ValidationResult with project-wide import validation issues
+    """
+    from pathlib import Path
+
+    project_path = Path(project_root)
+    issues: List[ValidationIssue] = []
+
+    if not project_path.exists():
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Project root does not exist: {project_root}",
+                project_root,
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Find all Python files in the project
+    python_files = list(project_path.rglob("*.py"))
+
+    if not python_files:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.WARNING,
+                f"No Python files found in project: {project_root}",
+                project_root,
+            )
+        )
+        return ValidationResult(issues=issues)
+
+    # Validate imports in each file
+    total_files = len(python_files)
+    files_with_errors = 0
+
+    for python_file in python_files:
+        file_result = validate_python_imports(python_file, project_root)
+        issues.extend(file_result.issues)
+
+        if not file_result.is_valid:
+            files_with_errors += 1
+
+    # Add summary information
+    if files_with_errors == 0:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.INFO,
+                f"Project import validation passed for all {total_files} Python files",
+                project_root,
+            )
+        )
+    else:
+        issues.append(
+            ValidationIssue(
+                IssueSeverity.WARNING,
+                f"Project import validation found issues in {files_with_errors}/{total_files} Python files",
+                project_root,
+            )
+        )
+
+    return ValidationResult(issues=issues)
+
+
+def validate_generated_project(project_root: str) -> ValidationResult:
+    """
+    Comprehensive validation of a generated CrewAI project.
+
+    Validates both project structure and Python code quality including:
+    - Python syntax validation for all Python files
+    - Import validation and dependency checking
+    - Project structure validation
+
+    Args:
+        project_root: Root directory of the generated CrewAI project
+
+    Returns:
+        ValidationResult with comprehensive validation results
+    """
+    from pathlib import Path
+
+    project_path = Path(project_root)
+    all_issues: List[ValidationIssue] = []
+
+    # 1. Basic project existence check
+    if not project_path.exists():
+        all_issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Project root does not exist: {project_root}",
+                project_root,
+            )
+        )
+        return ValidationResult(issues=all_issues)
+
+    if not project_path.is_dir():
+        all_issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Project root is not a directory: {project_root}",
+                project_root,
+            )
+        )
+        return ValidationResult(issues=all_issues)
+
+    # 2. Find and validate all Python files
+    python_files = list(project_path.rglob("*.py"))
+
+    if not python_files:
+        all_issues.append(
+            ValidationIssue(
+                IssueSeverity.WARNING,
+                f"No Python files found in project: {project_root}",
+                project_root,
+            )
+        )
+    else:
+        # Validate syntax for each Python file
+        syntax_errors = 0
+        import_errors = 0
+
+        for python_file in python_files:
+            # Skip __pycache__ files
+            if "__pycache__" in str(python_file):
+                continue
+
+            # Validate Python syntax
+            syntax_result = validate_python_syntax(python_file)
+            all_issues.extend(syntax_result.issues)
+
+            if not syntax_result.is_valid:
+                syntax_errors += 1
+
+            # Validate imports (only if syntax is valid)
+            if syntax_result.is_valid:
+                import_result = validate_python_imports(python_file, project_root)
+                all_issues.extend(import_result.issues)
+
+                if not import_result.is_valid:
+                    import_errors += 1
+
+        # Add summary statistics
+        total_files = len([f for f in python_files if "__pycache__" not in str(f)])
+
+        if syntax_errors == 0 and import_errors == 0:
+            all_issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"All {total_files} Python files passed validation",
+                    project_root,
+                )
+            )
+        else:
+            if syntax_errors > 0:
+                all_issues.append(
+                    ValidationIssue(
+                        IssueSeverity.ERROR,
+                        f"Syntax errors found in {syntax_errors}/{total_files} Python files",
+                        project_root,
+                    )
+                )
+            if import_errors > 0:
+                all_issues.append(
+                    ValidationIssue(
+                        IssueSeverity.WARNING,
+                        f"Import issues found in {import_errors}/{total_files} Python files",
+                        project_root,
+                    )
+                )
+
+    # 3. Validate CrewAI project structure
+    src_dir = project_path / "src"
+    if not src_dir.exists():
+        all_issues.append(
+            ValidationIssue(
+                IssueSeverity.ERROR,
+                f"Missing 'src' directory in CrewAI project: {project_root}",
+                project_root,
+            )
+        )
+    else:
+        # Check for project subdirectory
+        project_subdirs = [
+            d for d in src_dir.iterdir() if d.is_dir() and d.name != "__pycache__"
+        ]
+
+        if not project_subdirs:
+            all_issues.append(
+                ValidationIssue(
+                    IssueSeverity.ERROR,
+                    f"No project subdirectory found in src/: {project_root}",
+                    project_root,
+                )
+            )
+        else:
+            # Validate key files exist
+            project_subdir = project_subdirs[0]  # Use first valid subdirectory
+
+            expected_files = ["main.py", "crew.py"]
+            for expected_file in expected_files:
+                file_path = project_subdir / expected_file
+                if not file_path.exists():
+                    all_issues.append(
+                        ValidationIssue(
+                            IssueSeverity.ERROR,
+                            f"Missing required file: {expected_file} in {project_subdir.name}",
+                            str(file_path),
+                        )
+                    )
+                else:
+                    all_issues.append(
+                        ValidationIssue(
+                            IssueSeverity.INFO,
+                            f"Found required file: {expected_file}",
+                            str(file_path),
+                        )
+                    )
+
+            # Check for config directory
+            config_dir = project_subdir / "config"
+            if not config_dir.exists():
+                all_issues.append(
+                    ValidationIssue(
+                        IssueSeverity.WARNING,
+                        f"Missing config directory in {project_subdir.name}",
+                        str(config_dir),
+                    )
+                )
+            else:
+                # Check for configuration files
+                config_files = ["agents.yaml", "tasks.yaml"]
+                for config_file in config_files:
+                    config_path = config_dir / config_file
+                    if not config_path.exists():
+                        all_issues.append(
+                            ValidationIssue(
+                                IssueSeverity.WARNING,
+                                f"Missing config file: {config_file}",
+                                str(config_path),
+                            )
+                        )
+                    else:
+                        all_issues.append(
+                            ValidationIssue(
+                                IssueSeverity.INFO,
+                                f"Found config file: {config_file}",
+                                str(config_path),
+                            )
+                        )
+
+    # 4. Check for other important project files
+    important_files = ["pyproject.toml", "README.md", ".env"]
+    for important_file in important_files:
+        file_path = project_path / important_file
+        if not file_path.exists():
+            all_issues.append(
+                ValidationIssue(
+                    IssueSeverity.WARNING,
+                    f"Missing recommended file: {important_file}",
+                    str(file_path),
+                )
+            )
+        else:
+            all_issues.append(
+                ValidationIssue(
+                    IssueSeverity.INFO,
+                    f"Found project file: {important_file}",
+                    str(file_path),
+                )
+            )
+
+    return ValidationResult(issues=all_issues)
