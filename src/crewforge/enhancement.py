@@ -18,6 +18,7 @@ from jinja2.exceptions import TemplateNotFound, TemplateError
 
 from .llm import LLMClient
 from .tool_patterns import ToolPatternRegistry, ToolPattern, ProjectTypePattern
+from .configuration_updater import ConfigurationUpdater, UpdateStrategy
 
 
 class EnhancementError(Exception):
@@ -100,6 +101,9 @@ class EnhancementEngine:
 
         # Initialize tool patterns registry
         self.tool_registry = ToolPatternRegistry()
+
+        # Initialize configuration updater for smart YAML updates
+        self.config_updater = ConfigurationUpdater(logger=self.logger)
 
         self.logger.info(
             f"Enhancement engine initialized with templates from {self.templates_dir}"
@@ -870,6 +874,311 @@ Generate the task configuration now:"""
         except Exception as e:
             self.logger.error(f"Failed to enhance tasks configuration: {str(e)}")
             return {"success": False, "error": str(e), "backup_created": False}
+
+    def update_agent_configuration(
+        self,
+        project_path: Path,
+        agent_name: str,
+        agent_updates: Dict[str, Any],
+        strategy: UpdateStrategy = UpdateStrategy.UPDATE,
+    ) -> Dict[str, Any]:
+        """
+        Update a specific agent configuration using selective updating.
+
+        This method provides an alternative to template-based updating by selectively
+        modifying specific agents without overwriting the entire configuration file.
+
+        Args:
+            project_path: Path to the CrewAI project
+            agent_name: Name of the agent to update
+            agent_updates: Updates to apply to the agent
+            strategy: Update strategy (UPDATE, REPLACE, or ADD_ONLY)
+
+        Returns:
+            Dictionary with operation result
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "backup_created": False,
+                }
+
+            config_path = validation["config_path"]
+            agents_file = config_path / "agents.yaml"
+
+            if not agents_file.exists():
+                return {
+                    "success": False,
+                    "error": f"agents.yaml not found in {config_path}",
+                    "backup_created": False,
+                }
+
+            # Use configuration updater for selective update
+            result = self.config_updater.update_agent(
+                agents_file, agent_name, agent_updates, strategy
+            )
+
+            if result["success"]:
+                self.logger.info(
+                    f"Successfully updated agent '{agent_name}' in {agents_file} "
+                    f"using strategy '{strategy.value}'"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Failed to update agent configuration: {str(e)}")
+            return {"success": False, "error": str(e), "backup_created": False}
+
+    def update_task_configuration(
+        self,
+        project_path: Path,
+        task_name: str,
+        task_updates: Dict[str, Any],
+        strategy: UpdateStrategy = UpdateStrategy.UPDATE,
+    ) -> Dict[str, Any]:
+        """
+        Update a specific task configuration using selective updating.
+
+        This method provides an alternative to template-based updating by selectively
+        modifying specific tasks without overwriting the entire configuration file.
+
+        Args:
+            project_path: Path to the CrewAI project
+            task_name: Name of the task to update
+            task_updates: Updates to apply to the task
+            strategy: Update strategy (UPDATE, REPLACE, or ADD_ONLY)
+
+        Returns:
+            Dictionary with operation result
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "backup_created": False,
+                }
+
+            config_path = validation["config_path"]
+            tasks_file = config_path / "tasks.yaml"
+
+            if not tasks_file.exists():
+                return {
+                    "success": False,
+                    "error": f"tasks.yaml not found in {config_path}",
+                    "backup_created": False,
+                }
+
+            # Use configuration updater for selective update
+            result = self.config_updater.update_task(
+                tasks_file, task_name, task_updates, strategy
+            )
+
+            if result["success"]:
+                self.logger.info(
+                    f"Successfully updated task '{task_name}' in {tasks_file} "
+                    f"using strategy '{strategy.value}'"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Failed to update task configuration: {str(e)}")
+            return {"success": False, "error": str(e), "backup_created": False}
+
+    def bulk_update_agents_configuration(
+        self,
+        project_path: Path,
+        agent_updates: Dict[str, Dict[str, Any]],
+        strategy: UpdateStrategy = UpdateStrategy.UPDATE,
+    ) -> Dict[str, Any]:
+        """
+        Update multiple agents in the configuration using selective updating.
+
+        Args:
+            project_path: Path to the CrewAI project
+            agent_updates: Dictionary mapping agent names to their updates
+            strategy: Update strategy (UPDATE, REPLACE, or ADD_ONLY)
+
+        Returns:
+            Dictionary with operation result
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "backup_created": False,
+                }
+
+            config_path = validation["config_path"]
+            agents_file = config_path / "agents.yaml"
+
+            if not agents_file.exists():
+                return {
+                    "success": False,
+                    "error": f"agents.yaml not found in {config_path}",
+                    "backup_created": False,
+                }
+
+            # Use configuration updater for bulk update
+            result = self.config_updater.bulk_update_agents(
+                agents_file, agent_updates, strategy
+            )
+
+            if result["success"]:
+                updated_agents = result.get("updated_agents", [])
+                self.logger.info(
+                    f"Successfully updated {len(updated_agents)} agents in {agents_file}: "
+                    f"{', '.join(updated_agents)}"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Failed to bulk update agents configuration: {str(e)}")
+            return {"success": False, "error": str(e), "backup_created": False}
+
+    def bulk_update_tasks_configuration(
+        self,
+        project_path: Path,
+        task_updates: Dict[str, Dict[str, Any]],
+        strategy: UpdateStrategy = UpdateStrategy.UPDATE,
+    ) -> Dict[str, Any]:
+        """
+        Update multiple tasks in the configuration using selective updating.
+
+        Args:
+            project_path: Path to the CrewAI project
+            task_updates: Dictionary mapping task names to their updates
+            strategy: Update strategy (UPDATE, REPLACE, or ADD_ONLY)
+
+        Returns:
+            Dictionary with operation result
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "backup_created": False,
+                }
+
+            config_path = validation["config_path"]
+            tasks_file = config_path / "tasks.yaml"
+
+            if not tasks_file.exists():
+                return {
+                    "success": False,
+                    "error": f"tasks.yaml not found in {config_path}",
+                    "backup_created": False,
+                }
+
+            # Use configuration updater for bulk update
+            result = self.config_updater.bulk_update_tasks(
+                tasks_file, task_updates, strategy
+            )
+
+            if result["success"]:
+                updated_tasks = result.get("updated_tasks", [])
+                self.logger.info(
+                    f"Successfully updated {len(updated_tasks)} tasks in {tasks_file}: "
+                    f"{', '.join(updated_tasks)}"
+                )
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Failed to bulk update tasks configuration: {str(e)}")
+            return {"success": False, "error": str(e), "backup_created": False}
+
+    def validate_project_configuration(self, project_path: Path) -> Dict[str, Any]:
+        """
+        Validate both agents.yaml and tasks.yaml configuration files.
+
+        Args:
+            project_path: Path to the CrewAI project
+
+        Returns:
+            Dictionary with validation results for both files
+        """
+        try:
+            # Validate project structure
+            validation = self._validate_project_structure(project_path)
+            if not validation["valid"]:
+                return {
+                    "success": False,
+                    "error": validation["error"],
+                    "agents_validation": None,
+                    "tasks_validation": None,
+                }
+
+            config_path = validation["config_path"]
+            agents_file = config_path / "agents.yaml"
+            tasks_file = config_path / "tasks.yaml"
+
+            results: Dict[str, Any] = {"success": True}
+
+            # Validate agents.yaml
+            if agents_file.exists():
+                agents_validation = self.config_updater.validate_configuration(
+                    agents_file
+                )
+                results["agents_validation"] = agents_validation
+            else:
+                results["agents_validation"] = {
+                    "success": False,
+                    "errors": ["agents.yaml not found"],
+                    "warnings": [],
+                }
+
+            # Validate tasks.yaml
+            if tasks_file.exists():
+                tasks_validation = self.config_updater.validate_configuration(
+                    tasks_file
+                )
+                results["tasks_validation"] = tasks_validation
+            else:
+                results["tasks_validation"] = {
+                    "success": False,
+                    "errors": ["tasks.yaml not found"],
+                    "warnings": [],
+                }
+
+            # Overall success depends on both files being valid AND having no errors
+            agents_has_errors = (
+                not results["agents_validation"]["success"]
+                or len(results["agents_validation"].get("errors", [])) > 0
+            )
+            tasks_has_errors = (
+                not results["tasks_validation"]["success"]
+                or len(results["tasks_validation"].get("errors", [])) > 0
+            )
+
+            overall_success = not (agents_has_errors or tasks_has_errors)
+            results["success"] = overall_success
+
+            return results
+
+        except Exception as e:
+            self.logger.error(f"Failed to validate project configuration: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "agents_validation": None,
+                "tasks_validation": None,
+            }
 
     def _validate_project_structure(self, project_path: Path) -> Dict[str, Any]:
         """
