@@ -2,6 +2,7 @@
 
 import json
 import logging
+import signal
 import time
 from typing import Any
 
@@ -104,7 +105,8 @@ class LLMClient:
         # Set up model routing and API key detection
         # LiteLLM automatically detects API keys from environment variables
         litellm.drop_params = True  # Drop unsupported parameters
-        # Note: litellm.set_verbose does not exist, using litellm logging configuration instead
+        # Enable debug mode for troubleshooting
+        # litellm._turn_on_debug()  # Uncomment for debugging
 
     def generate(
         self,
@@ -139,6 +141,7 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
+            "timeout": 30,  # 30 second timeout to prevent hanging
         }
 
         if use_json_mode:
@@ -153,7 +156,7 @@ class LLMClient:
     def _execute_with_retry(
         self, completion_args: dict[str, Any], parse_json: bool
     ) -> str | dict[str, Any]:
-        """Execute LLM call with exponential backoff retry logic."""
+        """Execute LLM call with exponential backoff retry logic and timeout."""
         last_exception = None
 
         for attempt in range(self.retry_config.max_attempts):
@@ -161,7 +164,27 @@ class LLMClient:
                 logger.debug(
                     f"LLM API call attempt {attempt + 1}/{self.retry_config.max_attempts}"
                 )
-                response = litellm.completion(**completion_args)
+
+                # Use signal-based timeout for more aggressive timeout handling
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("LLM API call timed out after 30 seconds")
+
+                # Set up signal handler (Unix only)
+                try:
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(30)  # 30 second timeout
+                except (AttributeError, OSError):
+                    # signal.SIGALRM not available on Windows or in some environments
+                    pass
+
+                try:
+                    response = litellm.completion(**completion_args)
+                finally:
+                    # Clear the alarm
+                    try:
+                        signal.alarm(0)
+                    except (AttributeError, OSError):
+                        pass
 
                 # Handle response structure safely - type ignore needed for LiteLLM response types
                 if not hasattr(response, "choices") or not response.choices:  # type: ignore
@@ -253,6 +276,14 @@ class LLMClient:
         """Categorize exceptions into appropriate LLMError types."""
         error_str = str(error).lower()
 
+        # Timeout errors
+        if isinstance(error, TimeoutError) or any(
+            keyword in error_str for keyword in ["timeout", "timed out", "time out"]
+        ):
+            return LLMNetworkError(
+                f"Request timed out: {str(error)}", original_exception=error
+            )
+
         # Authentication errors
         if any(
             keyword in error_str
@@ -283,8 +314,7 @@ class LLMClient:
 
         # Network errors
         if any(
-            keyword in error_str
-            for keyword in ["connection", "network", "timeout", "unreachable"]
+            keyword in error_str for keyword in ["connection", "network", "unreachable"]
         ):
             return LLMNetworkError(
                 f"Network error: {str(error)}", original_exception=error

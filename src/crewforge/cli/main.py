@@ -281,18 +281,50 @@ def generate(prompt: str, name: Optional[str] = None):
         click.echo("")
         click.echo("🤖 Analyzing prompt for crew requirements...")
 
+        # Check if API key is available before proceeding
+        if not os.getenv("OPENAI_API_KEY"):
+            raise click.ClickException(
+                "OPENAI_API_KEY environment variable is not set. "
+                "Please set your OpenAI API key:\n"
+                "  export OPENAI_API_KEY='your-api-key-here'"
+            )
+
         try:
             # Generate the complete project using scaffolding
             current_dir = Path.cwd()
+
+            # Add progress indication with timeout handling
+            click.echo("   ⏳ Making API calls to generate configurations...")
+
             project_path = scaffolder.generate_project(generation_request, current_dir)
 
             click.echo("🧠 Generated agent configurations")
             click.echo("📋 Created task definitions")
             click.echo("🔧 Selected appropriate tools")
-            click.echo("� Created CrewAI project structure")
+            click.echo("🏗️ Created CrewAI project structure")
             click.echo("🎯 Populated project files")
             click.echo("✅ Project generation completed")
 
+        except LLMAuthenticationError as e:
+            raise click.ClickException(
+                f"Authentication failed: {e}\n"
+                "Please check your OPENAI_API_KEY and try again."
+            )
+        except LLMRateLimitError as e:
+            raise click.ClickException(
+                f"Rate limit exceeded: {e}\n"
+                "Please wait a moment and try again, or check your API quota."
+            )
+        except LLMNetworkError as e:
+            raise click.ClickException(
+                f"Network error: {e}\n"
+                "Please check your internet connection and try again."
+            )
+        except LLMError as e:
+            raise click.ClickException(
+                f"LLM API error: {e}\n"
+                "This may be a temporary issue. Please try again."
+            )
         except ScaffoldingError as e:
             raise click.ClickException(f"Project generation failed: {e}")
         except Exception as e:
