@@ -1,8 +1,10 @@
 """Main CLI entry point for CrewForge."""
 
+import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -10,7 +12,19 @@ import click
 from pydantic import ValidationError
 
 from crewforge.models import GenerationRequest
-from crewforge.core.scaffolding import ProjectScaffolder, ScaffoldingError
+from crewforge.core.scaffolding import (
+    ProjectScaffolder,
+    ScaffoldingError,
+    CrewAICommandError,
+    FileSystemError,
+    ProjectStructureError,
+)
+from crewforge.core.llm import (
+    LLMError,
+    LLMAuthenticationError,
+    LLMRateLimitError,
+    LLMNetworkError,
+)
 
 
 def validate_prompt(prompt: str) -> str:
@@ -266,19 +280,19 @@ def generate(prompt: str, name: Optional[str] = None):
         # Step 5: Generate complete CrewAI project
         click.echo("")
         click.echo("🤖 Analyzing prompt for crew requirements...")
-        
+
         try:
             # Generate the complete project using scaffolding
             current_dir = Path.cwd()
             project_path = scaffolder.generate_project(generation_request, current_dir)
-            
+
             click.echo("🧠 Generated agent configurations")
             click.echo("📋 Created task definitions")
             click.echo("🔧 Selected appropriate tools")
             click.echo("� Created CrewAI project structure")
             click.echo("🎯 Populated project files")
             click.echo("✅ Project generation completed")
-            
+
         except ScaffoldingError as e:
             raise click.ClickException(f"Project generation failed: {e}")
         except Exception as e:

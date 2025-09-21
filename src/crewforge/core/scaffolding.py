@@ -4,8 +4,11 @@ This module implements the ProjectScaffolder class that integrates CrewAI scaffo
 with complete file population using generated configurations.
 """
 
+import logging
+import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -13,13 +16,73 @@ from .generator import GenerationEngine
 from .templates import TemplateEngine
 from ..models import AgentConfig, TaskConfig, GenerationRequest
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 
 class ScaffoldingError(Exception):
     """Custom exception for scaffolding-related errors."""
 
-    def __init__(self, message: str, original_exception: Exception | None = None):
+    def __init__(
+        self,
+        message: str,
+        original_exception: Exception | None = None,
+        error_type: str = "general",
+    ):
         super().__init__(message)
         self.original_exception = original_exception
+        self.error_type = error_type
+
+
+class CrewAICommandError(ScaffoldingError):
+    """Raised when CrewAI CLI command fails."""
+
+    def __init__(
+        self,
+        command: List[str],
+        return_code: int,
+        stderr: str,
+        original_exception: Exception | None = None,
+    ):
+        self.command = command
+        self.return_code = return_code
+        self.stderr = stderr
+        message = (
+            f"CrewAI command failed: {' '.join(command)} (exit code {return_code})"
+        )
+        if stderr:
+            message += f"\nError output: {stderr}"
+        super().__init__(message, original_exception, "command")
+
+
+class FileSystemError(ScaffoldingError):
+    """Raised when file system operations fail."""
+
+    def __init__(
+        self,
+        message: str,
+        path: Path | None = None,
+        original_exception: Exception | None = None,
+    ):
+        self.path = path
+        if path:
+            message = f"{message}: {path}"
+        super().__init__(message, original_exception, "filesystem")
+
+
+class ProjectStructureError(ScaffoldingError):
+    """Raised when project structure validation fails."""
+
+    def __init__(
+        self,
+        message: str,
+        project_path: Path | None = None,
+        original_exception: Exception | None = None,
+    ):
+        self.project_path = project_path
+        if project_path:
+            message = f"{message} in project: {project_path}"
+        super().__init__(message, original_exception, "structure")
 
 
 class ProjectScaffolder:
@@ -64,37 +127,92 @@ class ProjectScaffolder:
             Path to the created project directory
 
         Raises:
-            ScaffoldingError: If project creation fails
+            CrewAICommandError: If CrewAI CLI command fails
+            FileSystemError: If file system operations fail
         """
+        # Validate inputs
+        if not project_name or not project_name.strip():
+            raise ValueError("Project name cannot be empty")
+
+        if not parent_dir.exists():
+            raise FileSystemError("Parent directory does not exist", parent_dir)
+
+        if not os.access(parent_dir, os.W_OK):
+            raise FileSystemError("Parent directory is not writable", parent_dir)
+
+        # Check if project already exists
+        project_path = parent_dir / project_name
+        if project_path.exists():
+            raise FileSystemError("Project directory already exists", project_path)
+
+        # Check if CrewAI CLI is available
         try:
-            # Run the crewai create crew command
             result = subprocess.run(
-                ["crewai", "create", "crew", project_name],
+                ["crewai", "--version"], capture_output=True, text=True, timeout=10
+            )
+            if result.returncode != 0:
+                raise CrewAICommandError(
+                    ["crewai", "--version"],
+                    result.returncode,
+                    "CrewAI CLI not found or not working properly",
+                )
+        except subprocess.TimeoutExpired:
+            raise CrewAICommandError(
+                ["crewai", "--version"], -1, "CrewAI CLI command timed out"
+            )
+        except FileNotFoundError:
+            raise CrewAICommandError(
+                ["crewai", "--version"],
+                -1,
+                "CrewAI CLI not found. Please install with: pip install crewai",
+            )
+
+        try:
+            logger.info(f"Creating CrewAI project '{project_name}' in {parent_dir}")
+
+            # Run the crewai create crew command with timeout
+            command = ["crewai", "create", "crew", project_name]
+            result = subprocess.run(
+                command,
                 cwd=parent_dir,
                 capture_output=True,
                 text=True,
+                timeout=120,  # 2 minute timeout
                 check=False,
             )
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                raise ScaffoldingError(
-                    f"CrewAI project creation failed with exit code {result.returncode}: {error_msg}"
-                )
+                logger.error(f"CrewAI command failed: {error_msg}")
+                raise CrewAICommandError(command, result.returncode, error_msg)
 
-            project_path = parent_dir / project_name
+            # Verify project was created
             if not project_path.exists():
-                raise ScaffoldingError(
-                    f"CrewAI project directory was not created: {project_path}"
+                raise FileSystemError(
+                    "Project directory was not created after successful command",
+                    project_path,
                 )
 
+            # Verify basic project structure
+            expected_files = ["pyproject.toml", f"{project_name}/__init__.py"]
+            for expected_file in expected_files:
+                file_path = project_path / expected_file
+                if not file_path.exists():
+                    logger.warning(f"Expected project file not found: {file_path}")
+
+            logger.info(f"Successfully created CrewAI project at {project_path}")
             return project_path
 
+        except subprocess.TimeoutExpired:
+            logger.error("CrewAI command timed out")
+            raise CrewAICommandError(command, -1, "Command timed out after 2 minutes")
+
         except subprocess.SubprocessError as e:
-            raise ScaffoldingError(
-                f"Failed to execute CrewAI command: {str(e)}", original_exception=e
-            )
+            logger.error(f"Subprocess error: {e}")
+            raise CrewAICommandError(command, -1, f"Subprocess error: {str(e)}", e)
+
         except Exception as e:
+            logger.error(f"Unexpected error creating project: {e}")
             raise ScaffoldingError(
                 f"Unexpected error creating CrewAI project: {str(e)}",
                 original_exception=e,
@@ -116,41 +234,92 @@ class ProjectScaffolder:
             tools: Dictionary with selected tools information
 
         Raises:
-            ScaffoldingError: If file population fails
+            ProjectStructureError: If project structure validation fails
+            FileSystemError: If file operations fail
         """
         try:
+            logger.info(f"Populating project files in {project_path}")
+
             # Validate project structure
             self._validate_project_structure(project_path)
 
             # Get the module path for file population
             module_path = self._get_project_module_path(project_path)
 
-            # Populate each file type using templates
-            self.template_engine.populate_template(
-                "agents.py.j2", module_path / "agents.py", agents=agents
-            )
+            # Ensure module directory exists and is writable
+            if not module_path.exists():
+                raise ProjectStructureError(
+                    "Project module directory not found", module_path
+                )
 
-            self.template_engine.populate_template(
-                "tasks.py.j2", module_path / "tasks.py", tasks=tasks, agents=agents
-            )
+            if not os.access(module_path, os.W_OK):
+                raise FileSystemError(
+                    "Project module directory is not writable", module_path
+                )
 
-            self.template_engine.populate_template(
-                "tools.py.j2", module_path / "tools.py", tools=tools["selected_tools"]
-            )
+            # Check disk space before operations
+            self._check_disk_space(module_path)
 
-            self.template_engine.populate_template(
-                "crew.py.j2",
-                module_path / "crew.py",
-                agents=agents,
-                tasks=tasks,
-                tools=tools["selected_tools"],
-            )
+            # Populate each file type using templates with individual error handling
+            file_operations = [
+                ("agents.py.j2", "agents.py", {"agents": agents}),
+                ("tasks.py.j2", "tasks.py", {"tasks": tasks, "agents": agents}),
+                ("tools.py.j2", "tools.py", {"tools": tools["selected_tools"]}),
+                (
+                    "crew.py.j2",
+                    "crew.py",
+                    {
+                        "agents": agents,
+                        "tasks": tasks,
+                        "tools": tools["selected_tools"],
+                    },
+                ),
+            ]
 
+            for template_name, output_file, template_vars in file_operations:
+                try:
+                    output_path = module_path / output_file
+                    logger.debug(f"Populating {output_path}")
+
+                    # Backup existing file if it exists
+                    backup_path = None
+                    if output_path.exists():
+                        backup_path = output_path.with_suffix(
+                            output_path.suffix + ".bak"
+                        )
+                        shutil.copy2(output_path, backup_path)
+                        logger.debug(f"Created backup: {backup_path}")
+
+                    # Populate template
+                    self.template_engine.populate_template(
+                        template_name, output_path, **template_vars
+                    )
+
+                    # Remove backup on success
+                    if backup_path and backup_path.exists():
+                        backup_path.unlink()
+
+                    logger.debug(f"Successfully populated {output_file}")
+
+                except Exception as e:
+                    # Restore backup if it exists
+                    if backup_path and backup_path.exists():
+                        shutil.move(str(backup_path), str(output_path))
+                        logger.warning(f"Restored backup for {output_file}")
+
+                    raise FileSystemError(
+                        f"Failed to populate {output_file}", output_path, e
+                    )
+
+            logger.info("Successfully populated all project files")
+
+        except (ProjectStructureError, FileSystemError):
+            raise
         except Exception as e:
-            if isinstance(e, ScaffoldingError):
-                raise
+            logger.error(f"Unexpected error populating project files: {e}")
             raise ScaffoldingError(
-                f"Failed to populate project files: {str(e)}", original_exception=e
+                f"Unexpected error populating project files: {str(e)}",
+                original_exception=e,
             )
 
     def generate_project(self, request: GenerationRequest, output_dir: Path) -> Path:
@@ -211,6 +380,8 @@ class ProjectScaffolder:
                 )
 
             # Step 5: Create CrewAI project scaffolding
+            if not request.project_name:
+                raise ScaffoldingError("Project name is required but not provided")
             project_path = self.create_crewai_project(request.project_name, output_dir)
 
             # Step 6: Populate project files with generated content
@@ -236,23 +407,41 @@ class ProjectScaffolder:
             project_path: Path to the project directory
 
         Raises:
-            ScaffoldingError: If project structure is invalid
+            ProjectStructureError: If project structure is invalid
         """
         if not project_path.exists():
-            raise ScaffoldingError(f"Project directory does not exist: {project_path}")
+            raise ProjectStructureError(
+                "Project directory does not exist", project_path
+            )
+
+        if not project_path.is_dir():
+            raise ProjectStructureError("Project path is not a directory", project_path)
 
         src_dir = project_path / "src"
         if not src_dir.exists() or not src_dir.is_dir():
-            raise ScaffoldingError(
-                f"CrewAI project structure is invalid: missing src directory in {project_path}"
+            raise ProjectStructureError(
+                "Invalid CrewAI project structure: missing src directory", project_path
             )
 
         # Find the module directory (should be the only directory under src)
-        module_dirs = [d for d in src_dir.iterdir() if d.is_dir()]
+        try:
+            module_dirs = [d for d in src_dir.iterdir() if d.is_dir()]
+        except PermissionError as e:
+            raise FileSystemError("Unable to read src directory", src_dir, e)
+
         if not module_dirs:
-            raise ScaffoldingError(
-                f"CrewAI project structure is invalid: no module directory found in {src_dir}"
+            raise ProjectStructureError(
+                "Invalid CrewAI project structure: no module directory found", src_dir
             )
+
+        # Verify essential files exist
+        essential_files = ["pyproject.toml"]
+        for file_name in essential_files:
+            file_path = project_path / file_name
+            if not file_path.exists():
+                logger.warning(f"Expected project file not found: {file_path}")
+
+        logger.debug(f"Project structure validation passed for {project_path}")
 
     def _get_project_module_path(self, project_path: Path) -> Path:
         """Get the path to the project's Python module directory.
@@ -264,13 +453,38 @@ class ProjectScaffolder:
             Path to the module directory under src/
 
         Raises:
-            ScaffoldingError: If module path cannot be determined
+            ProjectStructureError: If module path cannot be determined
         """
         src_dir = project_path / "src"
         module_dirs = [d for d in src_dir.iterdir() if d.is_dir()]
 
         if not module_dirs:
-            raise ScaffoldingError(f"No module directory found in {src_dir}")
+            raise ProjectStructureError("No module directory found", src_dir)
 
         # Return the first (and expected only) module directory
         return module_dirs[0]
+
+    def _check_disk_space(self, path: Path, min_space_mb: int = 100) -> None:
+        """Check if there's enough disk space for project operations.
+
+        Args:
+            path: Path to check disk space for
+            min_space_mb: Minimum required space in megabytes
+
+        Raises:
+            FileSystemError: If insufficient disk space
+        """
+        try:
+            stat = shutil.disk_usage(path)
+            free_space_mb = stat.free / (1024 * 1024)  # Convert to MB
+
+            if free_space_mb < min_space_mb:
+                raise FileSystemError(
+                    f"Insufficient disk space. Required: {min_space_mb}MB, Available: {free_space_mb:.1f}MB",
+                    path,
+                )
+
+            logger.debug(f"Disk space check passed: {free_space_mb:.1f}MB available")
+
+        except OSError as e:
+            raise FileSystemError(f"Unable to check disk space: {str(e)}", path, e)

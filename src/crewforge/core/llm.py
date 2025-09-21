@@ -1,19 +1,65 @@
 """LiteLLM integration for multi-provider LLM access with retry logic and structured outputs."""
 
 import json
+import logging
 import time
 from typing import Any
 
 import litellm
 from pydantic import BaseModel, Field, validator
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 
 class LLMError(Exception):
     """Custom exception for LLM-related errors."""
 
-    def __init__(self, message: str, original_exception: Exception | None = None):
+    def __init__(
+        self,
+        message: str,
+        original_exception: Exception | None = None,
+        error_type: str = "general",
+        retry_exhausted: bool = False,
+    ):
         super().__init__(message)
         self.original_exception = original_exception
+        self.error_type = error_type
+        self.retry_exhausted = retry_exhausted
+
+
+class LLMRateLimitError(LLMError):
+    """Raised when API rate limits are exceeded."""
+
+    def __init__(
+        self,
+        message: str,
+        retry_after: int | None = None,
+        original_exception: Exception | None = None,
+    ):
+        super().__init__(message, original_exception, "rate_limit")
+        self.retry_after = retry_after
+
+
+class LLMAuthenticationError(LLMError):
+    """Raised when API authentication fails."""
+
+    def __init__(self, message: str, original_exception: Exception | None = None):
+        super().__init__(message, original_exception, "authentication")
+
+
+class LLMNetworkError(LLMError):
+    """Raised when network-related issues occur."""
+
+    def __init__(self, message: str, original_exception: Exception | None = None):
+        super().__init__(message, original_exception, "network")
+
+
+class LLMResponseError(LLMError):
+    """Raised when response parsing or validation fails."""
+
+    def __init__(self, message: str, original_exception: Exception | None = None):
+        super().__init__(message, original_exception, "response")
 
 
 class RetryConfig(BaseModel):
@@ -112,40 +158,65 @@ class LLMClient:
 
         for attempt in range(self.retry_config.max_attempts):
             try:
+                logger.debug(
+                    f"LLM API call attempt {attempt + 1}/{self.retry_config.max_attempts}"
+                )
                 response = litellm.completion(**completion_args)
 
                 # Handle response structure safely - type ignore needed for LiteLLM response types
                 if not hasattr(response, "choices") or not response.choices:  # type: ignore
-                    raise LLMError("Invalid response structure: no choices found")
+                    raise LLMResponseError(
+                        "Invalid response structure: no choices found"
+                    )
 
                 choice = response.choices[0]  # type: ignore
                 if not hasattr(choice, "message") or not hasattr(choice.message, "content"):  # type: ignore
-                    raise LLMError(
+                    raise LLMResponseError(
                         "Invalid response structure: no message content found"
                     )
 
                 content = choice.message.content  # type: ignore
                 if content is None:
-                    raise LLMError("Empty response content received")
+                    raise LLMResponseError("Empty response content received")
 
                 if parse_json:
                     try:
                         parsed_result: dict[str, Any] = json.loads(content)
+                        logger.debug("Successfully parsed JSON response")
                         return parsed_result
                     except json.JSONDecodeError as e:
-                        raise LLMError(
-                            f"Failed to parse JSON response: {content}",
+                        raise LLMResponseError(
+                            f"Failed to parse JSON response: {content[:200]}...",
                             original_exception=e,
                         ) from e
 
+                logger.debug("Successfully received text response")
                 return content
 
             except Exception as e:
                 last_exception = e
 
-                # Don't retry on JSON parsing errors
-                if isinstance(e, LLMError):
-                    raise
+                # Categorize errors for better handling
+                categorized_error = self._categorize_error(e)
+
+                # Log the error with appropriate level
+                log_level = (
+                    logging.WARNING
+                    if attempt < self.retry_config.max_attempts - 1
+                    else logging.ERROR
+                )
+                logger.log(
+                    log_level, f"LLM API error on attempt {attempt + 1}: {str(e)}"
+                )
+
+                # Don't retry on certain error types
+                if isinstance(
+                    categorized_error, (LLMAuthenticationError, LLMResponseError)
+                ):
+                    logger.error(
+                        f"Non-retryable error encountered: {categorized_error}"
+                    )
+                    raise categorized_error
 
                 # Calculate delay with exponential backoff
                 if (
@@ -156,13 +227,75 @@ class LLMClient:
                         * (self.retry_config.exponential_base**attempt),
                         self.retry_config.max_delay,
                     )
+
+                    # Handle rate limiting with special backoff
+                    if (
+                        isinstance(categorized_error, LLMRateLimitError)
+                        and categorized_error.retry_after
+                    ):
+                        delay = max(delay, categorized_error.retry_after)
+
+                    logger.info(f"Retrying in {delay:.2f} seconds...")
                     time.sleep(delay)
 
         # All retries exhausted
-        raise LLMError(
-            f"Failed after {self.retry_config.max_attempts} attempts: {str(last_exception)}",
-            original_exception=last_exception,
+        final_error = (
+            self._categorize_error(last_exception)
+            if last_exception
+            else LLMError("Unknown error")
         )
+        final_error.retry_exhausted = True
+
+        logger.error(f"LLM API failed after {self.retry_config.max_attempts} attempts")
+        raise final_error
+
+    def _categorize_error(self, error: Exception) -> LLMError:
+        """Categorize exceptions into appropriate LLMError types."""
+        error_str = str(error).lower()
+
+        # Authentication errors
+        if any(
+            keyword in error_str
+            for keyword in ["auth", "unauthorized", "invalid key", "api key"]
+        ):
+            return LLMAuthenticationError(
+                f"Authentication failed: {str(error)}", original_exception=error
+            )
+
+        # Rate limiting errors
+        if any(
+            keyword in error_str
+            for keyword in ["rate limit", "quota", "too many requests"]
+        ):
+            # Try to extract retry-after from error message
+            retry_after = None
+            import re
+
+            match = re.search(r"retry.*?(\d+)", error_str)
+            if match:
+                retry_after = int(match.group(1))
+
+            return LLMRateLimitError(
+                f"Rate limit exceeded: {str(error)}",
+                retry_after=retry_after,
+                original_exception=error,
+            )
+
+        # Network errors
+        if any(
+            keyword in error_str
+            for keyword in ["connection", "network", "timeout", "unreachable"]
+        ):
+            return LLMNetworkError(
+                f"Network error: {str(error)}", original_exception=error
+            )
+
+        # Response errors (already handled above but for completeness)
+        if isinstance(error, LLMResponseError):
+            return error
+
+        # Generic LLM error
+        return LLMError(f"LLM API error: {str(error)}", original_exception=error)
 
 
 # Prompt engineering templates and utilities
