@@ -4,9 +4,11 @@ import json
 import logging
 import signal
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import litellm
+from jinja2 import Environment, FileSystemLoader, Template
 from pydantic import BaseModel, Field, validator
 
 # Configure logging
@@ -100,6 +102,26 @@ class LLMClient:
         # Configure LiteLLM
         self._configure_litellm()
 
+        # Initialize Jinja2 environment for prompt templates
+        self._setup_prompt_templates()
+
+    def _setup_prompt_templates(self) -> None:
+        """Initialize Jinja2 environment for loading prompt templates."""
+        # Path to prompt templates directory
+        templates_dir = Path(__file__).parent.parent / "templates" / "prompts"
+
+        if not templates_dir.exists():
+            logger.warning(f"Prompt templates directory not found: {templates_dir}")
+            self.prompt_env = None
+            return
+
+        self.prompt_env = Environment(
+            loader=FileSystemLoader(str(templates_dir)),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+        )
+
     def _configure_litellm(self) -> None:
         """Configure LiteLLM with appropriate settings."""
         # Set up model routing and API key detection
@@ -107,6 +129,59 @@ class LLMClient:
         litellm.drop_params = True  # Drop unsupported parameters
         # Enable debug mode for troubleshooting
         # litellm._turn_on_debug()  # Uncomment for debugging
+
+    def _render_prompt_template(self, template_name: str, **context: Any) -> str:
+        """Load and render a prompt template with the given context.
+
+        Args:
+            template_name: Name of the template file (e.g., 'system_prompt.j2')
+            **context: Template context variables
+
+        Returns:
+            Rendered prompt string
+
+        Raises:
+            LLMError: If template loading or rendering fails
+        """
+        if self.prompt_env is None:
+            raise LLMError(
+                "Prompt templates not available - environment not initialized"
+            )
+
+        try:
+            template = self.prompt_env.get_template(template_name)
+            return template.render(**context)
+        except Exception as e:
+            raise LLMError(
+                f"Failed to render prompt template {template_name}: {str(e)}"
+            ) from e
+
+    def get_system_prompt(self) -> str:
+        """Get the CrewAI system prompt from template.
+
+        Returns:
+            System prompt string
+
+        Raises:
+            LLMError: If template loading fails
+        """
+        return self._render_prompt_template("crewai_system_prompt.j2")
+
+    def format_user_prompt(self, user_requirements: str) -> str:
+        """Format user requirements using template.
+
+        Args:
+            user_requirements: Natural language description of crew requirements
+
+        Returns:
+            Formatted user prompt string
+
+        Raises:
+            LLMError: If template loading fails
+        """
+        return self._render_prompt_template(
+            "user_requirements_prompt.j2", user_requirements=user_requirements
+        )
 
     def generate(
         self,
@@ -410,60 +485,45 @@ class LLMClient:
 
 # Prompt engineering templates and utilities
 
-CREWAI_SYSTEM_PROMPT = """You are an expert CrewAI project architect. Your role is to analyze natural language requirements and generate comprehensive agent, task, and tool configurations for CrewAI projects.
 
-CrewAI Framework Knowledge:
-- Agents have roles (job titles), goals (objectives), and backstories (context/expertise)
-- Tasks have descriptions (what to do) and expected_output (format/content of results)
-- Tools extend agent capabilities (web search, file operations, APIs, etc.)
-- Agents are assigned to tasks based on role compatibility
-- Tasks can depend on outputs from other tasks
+def get_crewai_system_prompt(llm_client: LLMClient) -> str:
+    """Get the CrewAI system prompt from template.
 
-Your responses must be valid JSON with this structure:
-{
-  "agents": [
-    {
-      "role": "Agent Job Title",
-      "goal": "Clear objective the agent should achieve",
-      "backstory": "Professional background and expertise context"
-    }
-  ],
-  "tasks": [
-    {
-      "description": "Detailed description of what needs to be done",
-      "expected_output": "Specific format and content expected as output"
-    }
-  ],
-  "tools": ["tool_name_1", "tool_name_2"]
-}
+    Args:
+        llm_client: LLM client instance with initialized prompt environment
 
-Generate configurations that are:
-1. Aligned with the business requirements
-2. Professionally realistic and practical
-3. Compatible with CrewAI framework patterns
-4. Optimized for the specified use case"""
+    Returns:
+        Rendered system prompt string
+
+    Raises:
+        LLMError: If template loading fails
+    """
+    return llm_client._render_prompt_template("crewai_system_prompt.j2")
 
 
-def format_user_prompt(user_requirements: str) -> str:
+def format_user_prompt(
+    user_requirements: str, llm_client: LLMClient | None = None
+) -> str:
     """Format user requirements into structured prompt for LLM.
 
     Args:
         user_requirements: Natural language description of crew requirements
+        llm_client: Optional LLM client instance for template rendering
 
     Returns:
         Formatted prompt with context and structure
+
+    Raises:
+        LLMError: If template loading fails and no client provided
     """
-    return f"""Analyze the following requirements and generate a comprehensive CrewAI project configuration:
-
-Requirements: {user_requirements}
-
-Please provide a complete configuration that includes:
-1. Appropriate agents with distinct roles that cover all aspects of the requirements
-2. Well-defined tasks that utilize the agents effectively
-3. Relevant tools from the CrewAI ecosystem that enhance agent capabilities
-4. Logical task dependencies and workflow organization
-
-Focus on creating a practical, production-ready crew that can accomplish the specified business objectives."""
+    if llm_client and hasattr(llm_client, "prompt_env") and llm_client.prompt_env:
+        return llm_client._render_prompt_template(
+            "user_requirements_prompt.j2", user_requirements=user_requirements
+        )
+    else:
+        raise LLMError(
+            "LLM client with prompt templates is required for prompt formatting"
+        )
 
 
 def parse_generation_response(response_data: dict[str, Any]) -> dict[str, Any]:

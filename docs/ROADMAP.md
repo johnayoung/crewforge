@@ -18,6 +18,10 @@
 - [x] **Commit 12**: Progress Tracking Foundation & Models ✅ [2025-09-22 12:45]
 - [x] **Commit 13**: Integration with ProjectScaffolder & Real-time Progress Display ✅ [2025-09-22 15:30]
 
+## Post-MVP Enhancement: Template-Based Prompt Management
+
+- [x] **Commit 14**: Jinja2 Template-Based Prompt System ✅ [2025-09-22 16:15]
+
 ## Implementation Sequence
 
 ### Commit 1: Project Foundation & Package Configuration
@@ -369,6 +373,34 @@
 - Integrated progress event emission throughout generation process with proper error handling and step completion tracking
 - Updated GenerationEngine methods to support streaming callbacks for real-time LLM response display
 - Enhanced LLMClient with generate_streaming() method and _execute_with_retry_streaming() for token-by-token streaming support
+
+### Commit 14: Jinja2 Template-Based Prompt System
+
+**Goal**: Refactor LLM prompt management from hardcoded strings to maintainable Jinja2 templates.
+
+**Requirements**:
+1. Create template infrastructure:
+   - Add `src/crewforge/templates/prompts/` directory structure
+   - Create `crewai_system_prompt.j2` template for system prompt
+   - Create `user_requirements_prompt.j2` template with variable substitution
+2. Update `src/crewforge/core/llm.py` with:
+   - Jinja2 Environment initialization for prompt templates
+   - Template loading and rendering methods
+   - Backwards compatibility with fallback to hardcoded prompts
+   - Integration with existing LLMClient API
+3. Update documentation:
+   - Add requirement to BRIEF.md Core Requirements
+   - Update SPEC.md file structure with prompts directory
+   - Add commit tracking to ROADMAP.md
+
+**Validation**: Templates load successfully, prompts render with variables, existing functionality maintained with fallback support ✅ [2025-09-22 16:15]
+
+**Implementation Details**:
+- Added Jinja2 environment setup in LLMClient constructor with FileSystemLoader for prompts directory
+- Created template rendering methods with error handling and fallback to hardcoded prompts
+- Maintained backwards compatibility by keeping original function signatures and constant exports
+- Added convenient instance methods for system and user prompt generation on LLMClient
+- Enhanced error handling with warning logs when templates fail to load, ensuring robust operation
 - Added CLI progress callback functions for real-time step tracking with progress percentages and status indicators
 - Created streaming callback system for live LLM response display during AI generation phases
 - Implemented comprehensive test suite covering progress integration, CLI display, and streaming functionality

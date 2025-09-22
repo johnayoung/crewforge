@@ -3,12 +3,7 @@
 ## Core Requirements (from Brief)
 
 **MVP Requirements:**
-- Parse natural language prompts        ├── core/
-       │   ├── __init__.py
-       │   ├── generator.py        # Agentic AI generation
-       │   ├── templates.py        # Template population
-       │   ├── progress.py         # Progress tracking system
-       │   └── validator.py        # Project validationibing crew functionality
+- Parse natural language prompts
 - Leverage `crewai create crew <name>` for project scaffolding
 - Using agentic AI, Generate agent definitions (roles, goals, backstories) from prompt context
 - Using agentic AI, Generate task definitions (descriptions, expected outputs) from prompt context
@@ -158,7 +153,10 @@ crewforge/
 │       │   ├── agents.py.j2        # Jinja2 agent template
 │       │   ├── tasks.py.j2         # Jinja2 task template
 │       │   ├── tools.py.j2         # Jinja2 tools template
-│       │   └── crew.py.j2          # Jinja2 crew template
+│       │   ├── crew.py.j2          # Jinja2 crew template
+│       │   └── prompts/
+│       │       ├── crewai_system_prompt.j2    # System prompt template
+│       │       └── user_requirements_prompt.j2 # User prompt template
 │       └── storage/
 │           ├── __init__.py
 │           └── learning.py         # Configuration persistence

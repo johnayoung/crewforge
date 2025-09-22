@@ -227,22 +227,26 @@ class TestPromptEngineering:
 
     def test_system_prompt_for_crewai_generation(self):
         """Test system prompt contains CrewAI context."""
-        from crewforge.core.llm import CREWAI_SYSTEM_PROMPT
+        from crewforge.core.llm import LLMClient
 
-        assert "CrewAI" in CREWAI_SYSTEM_PROMPT
-        assert "agent" in CREWAI_SYSTEM_PROMPT.lower()
-        assert "task" in CREWAI_SYSTEM_PROMPT.lower()
-        assert "tool" in CREWAI_SYSTEM_PROMPT.lower()
-        assert "JSON" in CREWAI_SYSTEM_PROMPT
+        client = LLMClient()
+        system_prompt = client.get_system_prompt()
+
+        assert "CrewAI" in system_prompt
+        assert "agent" in system_prompt.lower()
+        assert "task" in system_prompt.lower()
+        assert "tool" in system_prompt.lower()
+        assert "JSON" in system_prompt
 
     def test_user_prompt_template(self):
         """Test user prompt template for requirements extraction."""
-        from crewforge.core.llm import format_user_prompt
+        from crewforge.core.llm import LLMClient
 
+        client = LLMClient()
         user_requirements = (
             "Create a content research crew that finds and summarizes articles"
         )
-        formatted_prompt = format_user_prompt(user_requirements)
+        formatted_prompt = client.format_user_prompt(user_requirements)
 
         assert user_requirements in formatted_prompt
         assert "requirements" in formatted_prompt.lower()
