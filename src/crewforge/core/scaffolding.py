@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .generator import GenerationEngine
-from .progress import ProgressTracker, ProgressStep, StreamingCallbacks
+from .progress import (
+    ProgressTracker,
+    ProgressStatus,
+    StreamingCallbacks,
+    get_standard_generation_steps,
+)
 from .templates import TemplateEngine
 from ..models import AgentConfig, TaskConfig, GenerationRequest
 
@@ -118,21 +123,7 @@ class ProjectScaffolder:
             template_engine = TemplateEngine()
         if progress_tracker is None:
             # Create default progress tracker with standard generation steps
-            default_steps = [
-                ProgressStep(
-                    "create_scaffold", "Creating CrewAI project structure", 8.0
-                ),
-                ProgressStep(
-                    "analyze_prompt", "Analyzing prompt for requirements", 5.0
-                ),
-                ProgressStep(
-                    "generate_agents", "Generating agent configurations", 15.0
-                ),
-                ProgressStep("generate_tasks", "Creating task definitions", 10.0),
-                ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
-                ProgressStep("populate_files", "Populating project files", 4.0),
-            ]
-            progress_tracker = ProgressTracker(default_steps)
+            progress_tracker = ProgressTracker(get_standard_generation_steps())
 
         self.generation_engine = generation_engine
         self.template_engine = template_engine

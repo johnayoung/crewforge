@@ -314,3 +314,19 @@ class ProgressTracker:
             for step in self.steps
             if step.status not in [ProgressStatus.COMPLETED, ProgressStatus.FAILED]
         )
+
+
+def get_standard_generation_steps() -> List[ProgressStep]:
+    """Create the standard set of progress steps for CrewAI project generation.
+
+    Returns:
+        List of ProgressStep objects representing the complete generation pipeline
+    """
+    return [
+        ProgressStep("analyze_prompt", "Analyzing prompt for requirements", 5.0),
+        ProgressStep("generate_agents", "Generating agent configurations", 15.0),
+        ProgressStep("generate_tasks", "Creating task definitions", 10.0),
+        ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
+        ProgressStep("create_scaffold", "Creating CrewAI project structure", 8.0),
+        ProgressStep("populate_files", "Populating project files", 4.0),
+    ]

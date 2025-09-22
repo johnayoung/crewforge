@@ -1,13 +1,6 @@
 """Agentic AI Generation Engine for CrewForge.
 
-This module impleme        system_prompt = self.template_engine.render_template(
-            "prompts/analyze_prompt_system.j2"
-        )
-
-        user_prompt = self.template_engine.render_template(
-            "prompts/analyze_prompt_user.j2",
-            prompt=prompt
-        )ration logic that analyzes prompts and
+This module implements core generation logic that analyzes prompts and
 creates CrewAI configurations using LLM calls with quality controls.
 """
 
@@ -72,23 +65,13 @@ class GenerationEngine:
         Raises:
             GenerationError: If prompt analysis fails
         """
-        system_prompt = """You are an expert AI assistant specializing in analyzing business requirements 
-for CrewAI multi-agent systems. Your task is to analyze natural language prompts and extract 
-structured information needed to create effective agent crews.
+        system_prompt = self.template_engine.render_template(
+            "prompts/analyze_prompt_system.j2"
+        )
 
-Respond with a JSON object containing:
-- business_context: A brief description of the business domain and use case
-- required_roles: Array of specific agent roles needed (e.g., "Content Researcher", "Data Analyst")
-- objectives: Array of key objectives the crew should accomplish
-- tools_needed: Array of tool categories required (e.g., "web_search", "file_writing", "data_analysis")
-
-Focus on identifying distinct agent roles that would work together effectively."""
-
-        user_prompt = f"""Analyze this crew requirement and extract structured information:
-
-"{prompt}"
-
-Identify the business context, required agent roles, key objectives, and tools needed."""
+        user_prompt = self.template_engine.render_template(
+            "prompts/analyze_prompt_user.j2", prompt=prompt
+        )
 
         try:
             if streaming_callbacks:
