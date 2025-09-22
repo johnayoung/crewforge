@@ -106,6 +106,7 @@ class ProjectScaffolder:
         generation_engine: Optional[GenerationEngine] = None,
         template_engine: Optional[TemplateEngine] = None,
         progress_tracker: Optional[ProgressTracker] = None,
+        verbose: bool = False,
     ):
         """Initialize ProjectScaffolder.
 
@@ -116,9 +117,10 @@ class ProjectScaffolder:
                            If None, creates default instance.
             progress_tracker: ProgressTracker instance for progress tracking.
                             If None, creates default with basic steps.
+            verbose: Enable verbose output for detailed generation steps.
         """
         if generation_engine is None:
-            generation_engine = GenerationEngine()
+            generation_engine = GenerationEngine(verbose=verbose)
         if template_engine is None:
             template_engine = TemplateEngine()
         if progress_tracker is None:
@@ -128,6 +130,7 @@ class ProjectScaffolder:
         self.generation_engine = generation_engine
         self.template_engine = template_engine
         self.progress_tracker = progress_tracker
+        self.verbose = verbose
 
     def _normalize_project_name(self, project_name: str) -> str:
         """Convert project name to the directory name that CrewAI will create.

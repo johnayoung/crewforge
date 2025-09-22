@@ -185,8 +185,10 @@ def generate(
             progress_callback = create_progress_callback()
             progress_tracker.add_callback(progress_callback)
 
-            # Initialize scaffolder with progress tracker
-            scaffolder = ProjectScaffolder(progress_tracker=progress_tracker)
+            # Initialize scaffolder with progress tracker and verbose flag
+            scaffolder = ProjectScaffolder(
+                progress_tracker=progress_tracker, verbose=verbose
+            )
             if verbose:
                 click.echo(
                     "✅ Scaffolder ready with progress tracking (verbose mode: detailed output enabled)"

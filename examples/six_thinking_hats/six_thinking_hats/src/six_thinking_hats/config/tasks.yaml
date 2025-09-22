@@ -1,0 +1,48 @@
+gather_initial_startup_idea_de_task:
+  description: >
+    Gather initial startup idea details from the founder to provide context for the advisory board.
+  expected_output: >
+    A comprehensive document detailing the startup idea, including mission, vision, target market, unique value proposition, and current challenges.
+  agent: intelligent_moderator
+analyze_the_technical_feasibil_task:
+  description: >
+    Analyze the technical feasibility of the startup idea using the Six Thinking Hats framework.
+  expected_output: >
+    A detailed report using the Six Thinking Hats framework, focusing on the technical aspects of the startup idea, including potential risks, benefits, and innovative opportunities.
+  agent: cto_advisor
+evaluate_the_market_potential_task:
+  description: >
+    Evaluate the market potential and marketing strategy of the startup idea using the Six Thinking Hats framework.
+  expected_output: >
+    A comprehensive analysis using the Six Thinking Hats framework, focusing on market trends, customer segments, and marketing strategies.
+  agent: cmo_advisor
+assess_the_financial_viability_task:
+  description: >
+    Assess the financial viability and funding strategy of the startup idea using the Six Thinking Hats framework.
+  expected_output: >
+    A financial analysis report using the Six Thinking Hats framework, covering cost structures, revenue streams, and funding requirements.
+  agent: cfo_advisor
+evaluate_the_operational_and_h_task:
+  description: >
+    Evaluate the operational and human resource aspects of the startup idea using the Six Thinking Hats framework.
+  expected_output: >
+    An operational analysis using the Six Thinking Hats framework, focusing on team structure, operational processes, and HR policies.
+  agent: cpo_advisor
+provide_a_venture_capital_pers_task:
+  description: >
+    Provide a venture capital perspective on the startup idea, focusing on investment potential and exit strategies.
+  expected_output: >
+    A venture capital analysis report highlighting investment risks, potential returns, and exit strategies.
+  agent: vc_advisor
+facilitate_a_structured_debate_task:
+  description: >
+    Facilitate a structured debate among the advisors using the Six Thinking Hats framework to eliminate the echo chamber effect.
+  expected_output: >
+    A summary of the structured debate, highlighting diverse perspectives and consensus points reached by the advisory board.
+  agent: intelligent_moderator
+compile_a_final_multi_dimensio_task:
+  description: >
+    Compile a final multi-dimensional analysis report for the founder, incorporating all advisory perspectives and debate outcomes.
+  expected_output: >
+    A comprehensive report for the founder, integrating all advisor insights and structured debate outcomes, providing a brutally honest and rigorous analysis of the startup idea.
+  agent: intelligent_moderator

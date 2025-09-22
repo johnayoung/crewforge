@@ -4,7 +4,10 @@ This module implements core generation logic that analyzes prompts and
 creates CrewAI configurations using LLM calls with quality controls.
 """
 
+import time
 from typing import Any, Dict, List, Optional, Tuple
+
+import click
 
 from .llm import LLMClient
 from .progress import StreamingCallbacks
@@ -56,6 +59,7 @@ class GenerationEngine:
 
         Args:
             prompt: Natural language description of desired crew functionality
+            streaming_callbacks: Optional callbacks for streaming LLM responses
 
         Returns:
             Dict containing:
@@ -67,6 +71,11 @@ class GenerationEngine:
         Raises:
             GenerationError: If prompt analysis fails
         """
+        if self.verbose:
+            click.echo("🔍 Analyzing prompt for requirements...")
+
+        start_time = time.time()
+
         system_prompt = self.template_engine.render_template(
             "prompts/analyze_prompt_system.j2"
         )
@@ -75,16 +84,39 @@ class GenerationEngine:
             "prompts/analyze_prompt_user.j2", prompt=prompt
         )
 
+        # Create default streaming callbacks for verbose mode if none provided
+        use_streaming = streaming_callbacks is not None or self.verbose
+        callbacks_to_use = streaming_callbacks
+
+        if self.verbose and streaming_callbacks is None:
+            # Create verbose streaming callbacks with clear delimiters
+            def on_token(token: str) -> None:
+                click.echo(f"{token}", nl=False)
+
+            def on_completion(response: str) -> None:
+                click.echo("")  # New line after streaming
+
+            callbacks_to_use = StreamingCallbacks(
+                on_token=on_token, on_completion=on_completion
+            )
+
         try:
-            if streaming_callbacks:
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo("📡 Sending analysis request with streaming...")
+                    click.echo("═══ LLM Response Start ═══")
                 result = self.llm_client.generate_streaming(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
-                    streaming_callbacks=streaming_callbacks,
+                    streaming_callbacks=callbacks_to_use,
                     use_json_mode=True,
                     temperature=0.1,
                 )
+                if self.verbose:
+                    click.echo("═══ LLM Response End ═══")
             else:
+                if self.verbose:
+                    click.echo("📡 Sending analysis request...")
                 result = self.llm_client.generate(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
@@ -108,9 +140,30 @@ class GenerationEngine:
                     f"Missing required keys in analysis: {missing_keys}"
                 )
 
+            duration = time.time() - start_time
+
+            if self.verbose:
+                # Show analysis results summary
+                click.echo(f"✅ Analysis complete in {duration:.2f}s")
+                click.echo(
+                    f"   🏢 Business context: {result['business_context'][:50]}..."
+                )
+                click.echo(
+                    f"   👥 Required roles ({len(result['required_roles'])}): {', '.join(result['required_roles'])}"
+                )
+                click.echo(
+                    f"   🎯 Objectives ({len(result['objectives'])}): {len(result['objectives'])} identified"
+                )
+                click.echo(
+                    f"   🛠️  Tools needed ({len(result['tools_needed'])}): {', '.join(result['tools_needed'])}"
+                )
+
             return result
 
         except Exception as e:
+            duration = time.time() - start_time
+            if self.verbose:
+                click.echo(f"❌ Analysis failed after {duration:.2f}s: {str(e)}")
             raise GenerationError(
                 f"Failed to analyze prompt: {str(e)}", original_exception=e
             )
@@ -127,6 +180,7 @@ class GenerationEngine:
 
         Args:
             prompt_analysis: Analysis result from analyze_prompt()
+            streaming_callbacks: Optional callbacks for streaming LLM responses
 
         Returns:
             List of validated AgentConfig instances
@@ -134,6 +188,11 @@ class GenerationEngine:
         Raises:
             GenerationError: If agent generation fails
         """
+        if self.verbose:
+            click.echo("🤖 Generating agent configurations...")
+
+        start_time = time.time()
+
         system_prompt = self.template_engine.render_template(
             "prompts/generate_agents_system.j2"
         )
@@ -143,6 +202,11 @@ class GenerationEngine:
         objectives = prompt_analysis.get("objectives", [])
         tools_needed = prompt_analysis.get("tools_needed", [])
 
+        if self.verbose:
+            click.echo(
+                f"   📝 Creating {len(required_roles)} agents for roles: {', '.join(required_roles)}"
+            )
+
         user_prompt = self.template_engine.render_template(
             "prompts/generate_agents_user.j2",
             business_context=business_context,
@@ -151,13 +215,45 @@ class GenerationEngine:
             tools_needed=tools_needed,
         )
 
-        try:
-            result = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                use_json_mode=True,
-                temperature=0.2,
+        # Create default streaming callbacks for verbose mode if none provided
+        use_streaming = streaming_callbacks is not None or self.verbose
+        callbacks_to_use = streaming_callbacks
+
+        if self.verbose and streaming_callbacks is None:
+            # Create verbose streaming callbacks with clear delimiters
+            def on_token(token: str) -> None:
+                click.echo(f"{token}", nl=False)
+
+            def on_completion(response: str) -> None:
+                click.echo("")  # New line after streaming
+
+            callbacks_to_use = StreamingCallbacks(
+                on_token=on_token, on_completion=on_completion
             )
+
+        try:
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo("📡 Sending agent generation request with streaming...")
+                    click.echo("═══ LLM Response Start ═══")
+                result = self.llm_client.generate_streaming(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    streaming_callbacks=callbacks_to_use,
+                    use_json_mode=True,
+                    temperature=0.2,
+                )
+                if self.verbose:
+                    click.echo("═══ LLM Response End ═══")
+            else:
+                if self.verbose:
+                    click.echo("📡 Sending agent generation request...")
+                result = self.llm_client.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    use_json_mode=True,
+                    temperature=0.2,
+                )
 
             if not isinstance(result, dict) or "agents" not in result:
                 raise GenerationError("Invalid agent generation response structure")
@@ -181,9 +277,23 @@ class GenerationEngine:
             if not agents:
                 raise GenerationError("No valid agents generated")
 
+            duration = time.time() - start_time
+
+            if self.verbose:
+                click.echo(f"✅ Agent generation complete in {duration:.2f}s")
+                for i, agent in enumerate(agents):
+                    click.echo(f"   👤 Agent {i+1}: {agent.role}")
+                    click.echo(f"      🎯 Goal: {agent.goal[:60]}...")
+                    click.echo(f"      📖 Backstory: {agent.backstory[:60]}...")
+
             return agents
 
         except Exception as e:
+            duration = time.time() - start_time
+            if self.verbose:
+                click.echo(
+                    f"❌ Agent generation failed after {duration:.2f}s: {str(e)}"
+                )
             if isinstance(e, GenerationError):
                 raise
             raise GenerationError(
@@ -204,6 +314,7 @@ class GenerationEngine:
         Args:
             agents: List of generated AgentConfig instances
             prompt_analysis: Analysis result from analyze_prompt()
+            streaming_callbacks: Optional callbacks for streaming LLM responses
 
         Returns:
             List of validated TaskConfig instances
@@ -211,6 +322,11 @@ class GenerationEngine:
         Raises:
             GenerationError: If task generation fails
         """
+        if self.verbose:
+            click.echo("📋 Creating task definitions...")
+
+        start_time = time.time()
+
         system_prompt = self.template_engine.render_template(
             "prompts/generate_tasks_system.j2"
         )
@@ -219,6 +335,11 @@ class GenerationEngine:
         objectives = prompt_analysis.get("objectives", [])
         business_context = prompt_analysis.get("business_context", "")
 
+        if self.verbose:
+            click.echo(
+                f"   📝 Creating tasks for {len(agent_roles)} agents with {len(objectives)} objectives"
+            )
+
         user_prompt = self.template_engine.render_template(
             "prompts/generate_tasks_user.j2",
             agent_roles=agent_roles,
@@ -226,13 +347,45 @@ class GenerationEngine:
             business_context=business_context,
         )
 
-        try:
-            result = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                use_json_mode=True,
-                temperature=0.2,
+        # Create default streaming callbacks for verbose mode if none provided
+        use_streaming = streaming_callbacks is not None or self.verbose
+        callbacks_to_use = streaming_callbacks
+
+        if self.verbose and streaming_callbacks is None:
+            # Create verbose streaming callbacks with clear delimiters
+            def on_token(token: str) -> None:
+                click.echo(f"{token}", nl=False)
+
+            def on_completion(response: str) -> None:
+                click.echo("")  # New line after streaming
+
+            callbacks_to_use = StreamingCallbacks(
+                on_token=on_token, on_completion=on_completion
             )
+
+        try:
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo("📡 Sending task generation request with streaming...")
+                    click.echo("═══ LLM Response Start ═══")
+                result = self.llm_client.generate_streaming(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    streaming_callbacks=callbacks_to_use,
+                    use_json_mode=True,
+                    temperature=0.2,
+                )
+                if self.verbose:
+                    click.echo("═══ LLM Response End ═══")
+            else:
+                if self.verbose:
+                    click.echo("📡 Sending task generation request...")
+                result = self.llm_client.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    use_json_mode=True,
+                    temperature=0.2,
+                )
 
             if not isinstance(result, dict) or "tasks" not in result:
                 raise GenerationError("Invalid task generation response structure")
@@ -265,9 +418,23 @@ class GenerationEngine:
             if not tasks:
                 raise GenerationError("No valid tasks generated")
 
+            duration = time.time() - start_time
+
+            if self.verbose:
+                click.echo(f"✅ Task generation complete in {duration:.2f}s")
+                for i, task in enumerate(tasks):
+                    click.echo(f"   📋 Task {i+1}: {task.description[:50]}...")
+                    click.echo(f"      👤 Assigned to: {task.agent}")
+                    click.echo(
+                        f"      📄 Expected output: {task.expected_output[:60]}..."
+                    )
+
             return tasks
 
         except Exception as e:
+            duration = time.time() - start_time
+            if self.verbose:
+                click.echo(f"❌ Task generation failed after {duration:.2f}s: {str(e)}")
             if isinstance(e, GenerationError):
                 raise
             raise GenerationError(
@@ -285,6 +452,7 @@ class GenerationEngine:
 
         Args:
             tools_needed: List of tool categories/capabilities required
+            streaming_callbacks: Optional callbacks for streaming LLM responses
 
         Returns:
             Dict containing:
@@ -294,6 +462,14 @@ class GenerationEngine:
         Raises:
             GenerationError: If tool selection fails
         """
+        if self.verbose:
+            click.echo("🛠️  Selecting appropriate tools...")
+
+        start_time = time.time()
+
+        if self.verbose:
+            click.echo(f"   🔍 Evaluating tools for needs: {', '.join(tools_needed)}")
+
         system_prompt = self.template_engine.render_template(
             "prompts/select_tools_system.j2"
         )
@@ -303,13 +479,45 @@ class GenerationEngine:
             tools_needed=tools_needed,
         )
 
-        try:
-            result = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                use_json_mode=True,
-                temperature=0.1,
+        # Create default streaming callbacks for verbose mode if none provided
+        use_streaming = streaming_callbacks is not None or self.verbose
+        callbacks_to_use = streaming_callbacks
+
+        if self.verbose and streaming_callbacks is None:
+            # Create verbose streaming callbacks with clear delimiters
+            def on_token(token: str) -> None:
+                click.echo(f"{token}", nl=False)
+
+            def on_completion(response: str) -> None:
+                click.echo("")  # New line after streaming
+
+            callbacks_to_use = StreamingCallbacks(
+                on_token=on_token, on_completion=on_completion
             )
+
+        try:
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo("📡 Sending tool selection request with streaming...")
+                    click.echo("═══ LLM Response Start ═══")
+                result = self.llm_client.generate_streaming(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    streaming_callbacks=callbacks_to_use,
+                    use_json_mode=True,
+                    temperature=0.1,
+                )
+                if self.verbose:
+                    click.echo("═══ LLM Response End ═══")
+            else:
+                if self.verbose:
+                    click.echo("📡 Sending tool selection request...")
+                result = self.llm_client.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    use_json_mode=True,
+                    temperature=0.1,
+                )
 
             if not isinstance(result, dict):
                 raise GenerationError(f"Expected dict response, got {type(result)}")
@@ -338,9 +546,29 @@ class GenerationEngine:
                     if tool.get("name", "") not in unavailable_selected
                 ]
 
+            duration = time.time() - start_time
+
+            if self.verbose:
+                click.echo(f"✅ Tool selection complete in {duration:.2f}s")
+                selected_count = len(result["selected_tools"])
+                unavailable_count = len(result["unavailable_tools"])
+                click.echo(f"   ✅ Selected {selected_count} tools")
+                if selected_count > 0:
+                    for tool in result["selected_tools"]:
+                        click.echo(
+                            f"      🔧 {tool.get('name', 'Unknown')} - {tool.get('reason', 'No reason')[:50]}..."
+                        )
+                if unavailable_count > 0:
+                    click.echo(
+                        f"   ⚠️  {unavailable_count} tools unavailable: {', '.join(result['unavailable_tools'])}"
+                    )
+
             return result
 
         except Exception as e:
+            duration = time.time() - start_time
+            if self.verbose:
+                click.echo(f"❌ Tool selection failed after {duration:.2f}s: {str(e)}")
             if isinstance(e, GenerationError):
                 raise
             raise GenerationError(
