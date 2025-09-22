@@ -5,6 +5,7 @@ and populating Jinja2 templates for CrewAI project generation.
 """
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -56,22 +57,100 @@ class TemplateEngine:
         )
 
         # Add custom filters for template processing
-        self.env.filters["regex_replace"] = self._regex_replace_filter
+        self.env.filters["to_python_identifier"] = self._to_python_identifier
+        self.env.filters["to_class_name"] = self._to_class_name
+        self.env.filters["truncate_identifier"] = self._truncate_identifier
 
-    def _regex_replace_filter(
-        self, text: str, pattern: str, replacement: str = ""
-    ) -> str:
-        """Custom Jinja2 filter for regex-based string replacement.
+    def _to_python_identifier(self, text: str, prefix: str = "") -> str:
+        """Convert any string to a valid Python identifier.
 
         Args:
-            text: Input text to process
-            pattern: Regular expression pattern to match
-            replacement: Replacement string
+            text: Input text to convert
+            prefix: Optional prefix to add if the identifier starts with a number
 
         Returns:
-            Text with regex replacements applied
+            Valid Python identifier
+
+        Examples:
+            "Content Research Expert!" -> "content_research_expert"
+            "API-Integration Manager" -> "api_integration_manager"
+            "123 Numbers First" -> "numbers_first" (or "prefix_123_numbers_first" with prefix)
         """
-        return re.sub(pattern, replacement, text)
+        if not text:
+            return prefix or "unnamed"
+
+        # Convert to lowercase and normalize unicode
+        text = unicodedata.normalize("NFKD", text.lower())
+
+        # Replace common separators with underscores
+        text = text.replace("-", "_").replace(" ", "_").replace(".", "_")
+
+        # Remove all non-alphanumeric characters except underscores
+        text = "".join(c if c.isalnum() or c == "_" else "" for c in text)
+
+        # Remove consecutive underscores
+        text = re.sub(r"_+", "_", text)
+
+        # Remove leading/trailing underscores
+        text = text.strip("_")
+
+        # Handle edge cases
+        if not text:
+            return prefix or "unnamed"
+
+        # Ensure it doesn't start with a number
+        if text[0].isdigit():
+            text = f"{prefix}_{text}" if prefix else f"item_{text}"
+
+        # Ensure it's not a Python keyword
+        import keyword
+
+        if keyword.iskeyword(text):
+            text = f"{text}_var"
+
+        return text
+
+    def _to_class_name(self, text: str) -> str:
+        """Convert string to PascalCase class name.
+
+        Args:
+            text: Input text to convert
+
+        Returns:
+            PascalCase class name
+
+        Examples:
+            "content-research-crew" -> "ContentResearchCrew"
+            "my_project_name" -> "MyProjectName"
+        """
+        if not text:
+            return "UnnamedClass"
+
+        # First convert to identifier
+        identifier = self._to_python_identifier(text)
+
+        # Split by underscores and capitalize each part
+        parts = identifier.split("_")
+        return "".join(word.capitalize() for word in parts if word)
+
+    def _truncate_identifier(self, text: str, max_length: int = 30) -> str:
+        """Truncate an identifier to a maximum length while keeping it valid.
+
+        Args:
+            text: Identifier to truncate
+            max_length: Maximum length (default 30)
+
+        Returns:
+            Truncated identifier
+        """
+        if len(text) <= max_length:
+            return text
+
+        # Truncate and ensure we don't end with an underscore
+        truncated = text[:max_length].rstrip("_")
+
+        # If we truncated to nothing, return a default
+        return truncated if truncated else "truncated"
 
     def get_template(self, template_name: str) -> Template:
         """Load and return a Jinja2 template by name.
