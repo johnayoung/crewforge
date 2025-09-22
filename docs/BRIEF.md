@@ -24,6 +24,7 @@ A CLI tool that generates functional CrewAI MVPs from natural language prompts, 
 - **[MVP]** Select and configure tools from CrewAI's library based on requirements
 - **[MVP]** Wire agents, tasks, and tools into functional crew configuration
 - **[MVP]** Complete full generation cycle in <10 minutes
+- **[MVP]** Provide real-time progress tracking with step visibility, percentage completion, and LLM response streaming during generation
 - **[MVP]** Validate generated projects execute without syntax errors
 - **[MVP]** Ensure generated crews perform specified business functions
 - **[MVP]** Save configured agents, tasks, and tools to refine process over time

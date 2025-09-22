@@ -3,7 +3,12 @@
 ## Core Requirements (from Brief)
 
 **MVP Requirements:**
-- Parse natural language prompts describing crew functionality
+- Parse natural language prompts        ├── core/
+       │   ├── __init__.py
+       │   ├── generator.py        # Agentic AI generation
+       │   ├── templates.py        # Template population
+       │   ├── progress.py         # Progress tracking system
+       │   └── validator.py        # Project validationibing crew functionality
 - Leverage `crewai create crew <name>` for project scaffolding
 - Using agentic AI, Generate agent definitions (roles, goals, backstories) from prompt context
 - Using agentic AI, Generate task definitions (descriptions, expected outputs) from prompt context
@@ -115,6 +120,17 @@
 **Key Responsibilities:**
 - Save working agent/task/tool combinations
 - Track generation success patterns
+
+### Progress Tracking System
+**Purpose:** Provide real-time visibility into long-running generation processes
+**Inputs:** Generation step events, LLM token streams, process status updates
+**Outputs:** Progress indicators, step tracking, completion percentages, streaming content
+**Dependencies:** Event-driven architecture, async streaming capabilities
+**Key Responsibilities:**
+- Track current generation step and total progress percentage
+- Stream LLM responses token-by-token for real-time feedback
+- Display step descriptions and time estimation
+- Handle progress callback integration with existing components
 
 ## File Structure
 

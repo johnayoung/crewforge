@@ -13,6 +13,11 @@
 - [x] **Commit 10**: End-to-End Integration & Testing ✅ [2025-09-21 14:40]
 - [x] **Commit 11**: Error Handling & User Experience Polish ✅ [2025-09-21 15:45]
 
+## Post-MVP Enhancement: Progress Tracking System
+
+- [x] **Commit 12**: Progress Tracking Foundation & Models ✅ [2025-09-22 12:45]
+- [ ] **Commit 13**: Integration with ProjectScaffolder & Real-time Progress Display
+
 ## Implementation Sequence
 
 ### Commit 1: Project Foundation & Package Configuration
@@ -314,3 +319,46 @@
 - Error handling ensures production stability
 
 **Critical Path**: Each commit builds essential functionality for the next, with correct dependency ordering: Config → Models → CLI → LLM → Templates → Generator → Scaffolding → Validation → Learning → Integration → Polish.
+
+## Post-MVP Enhancement Implementation
+
+### Commit 12: Progress Tracking Foundation & Models
+
+**Goal**: Implement composable progress tracking system with step tracking, percentage calculation, and LLM streaming support.
+
+**Requirements**:
+1. Create `src/crewforge/core/progress.py` with:
+   - `ProgressTracker` class for step and percentage tracking
+   - `ProgressStep` dataclass for step definitions
+   - `StreamingCallbacks` for LLM response streaming
+   - Event-driven progress reporting with callbacks
+2. Implement progress tracking models:
+   - Step definitions with descriptions and estimated durations
+   - Progress calculation based on completed vs total steps
+   - Status tracking (not-started, in-progress, completed, failed)
+3. Add streaming support for LLM responses:
+   - Token-by-token streaming callbacks
+   - Real-time response display integration
+   - Buffering and error handling for streaming
+
+**Validation**: `uv run python -c "from crewforge.core.progress import ProgressTracker, ProgressStep; pt = ProgressTracker([ProgressStep('test', 'Test step')]); print('Progress tracking ready')"` → Progress system initializes and tracks steps
+
+### Commit 13: Integration with ProjectScaffolder & Real-time Progress Display
+
+**Goal**: Integrate progress tracking into ProjectScaffolder.generate_project() with real-time CLI feedback.
+
+**Requirements**:
+1. Update `src/crewforge/core/scaffolding.py` with:
+   - Progress tracking integration in `generate_project()` method
+   - Step-by-step progress callbacks during generation pipeline
+   - LLM streaming integration for real-time AI response display
+2. Enhance CLI with progress display:
+   - Real-time step progress indicators ("Step 3/7: Generating agents...")
+   - Percentage completion display
+   - LLM response streaming to show active generation
+3. Add comprehensive testing:
+   - Progress tracking unit tests
+   - Integration tests with ProjectScaffolder
+   - Mock streaming and callback verification
+
+**Validation**: `uv run crewforge generate "Create test crew"` → Shows real-time progress with step tracking, percentage completion, and streaming LLM responses during generation
