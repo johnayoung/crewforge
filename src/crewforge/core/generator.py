@@ -39,7 +39,7 @@ class GenerationEngine:
             verbose: If True, enables verbose output for detailed generation steps.
         """
         if llm_client is None:
-            llm_client = LLMClient()
+            llm_client = LLMClient(verbose=verbose)
         self.llm_client = llm_client
         self.verbose = verbose
 

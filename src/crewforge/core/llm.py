@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+import click
 import litellm
 from jinja2 import Environment, FileSystemLoader, Template
 from pydantic import BaseModel, Field, validator
@@ -89,15 +90,22 @@ class RetryConfig(BaseModel):
 class LLMClient:
     """Wrapper around LiteLLM for multi-provider LLM access with enhanced features."""
 
-    def __init__(self, model: str = "gpt-4o", retry_config: RetryConfig | None = None):
+    def __init__(
+        self,
+        model: str = "gpt-4o",
+        retry_config: RetryConfig | None = None,
+        verbose: bool = False,
+    ):
         """Initialize LLM client.
 
         Args:
             model: LLM model identifier (e.g., 'gpt-4', 'claude-3-sonnet-20240229')
             retry_config: Retry configuration for handling API failures
+            verbose: Enable verbose logging of requests and responses
         """
         self.model = model
         self.retry_config = retry_config or RetryConfig()
+        self.verbose = verbose
 
         # Configure LiteLLM
         self._configure_litellm()
@@ -127,6 +135,76 @@ class LLMClient:
         # Set up model routing and API key detection
         # LiteLLM automatically detects API keys from environment variables
         litellm.drop_params = True  # Drop unsupported parameters
+
+    def _log_verbose(self, message_type: str, content: str) -> None:
+        """Log verbose output with formatting and truncation.
+
+        Args:
+            message_type: Type of message (e.g., 'MODEL', 'SYSTEM_PROMPT', 'USER_PROMPT', 'RESPONSE', 'ERROR')
+            content: Content to log (will be truncated and formatted appropriately)
+        """
+        if not self.verbose:
+            return
+
+        # Color coding for different message types
+        colors = {
+            "MODEL": "blue",
+            "SYSTEM_PROMPT": "cyan",
+            "USER_PROMPT": "green",
+            "RESPONSE": "yellow",
+            "TOKEN_COUNT": "magenta",
+            "DURATION": "white",
+            "ERROR": "red",
+        }
+
+        color = colors.get(message_type, "white")
+
+        # Format content based on type
+        if message_type in ["SYSTEM_PROMPT", "USER_PROMPT"]:
+            # Truncate long prompts intelligently
+            formatted_content = self._truncate_text(content, max_length=200)
+        elif message_type == "RESPONSE":
+            # Try to format as JSON if possible, otherwise truncate
+            try:
+                parsed = json.loads(content)
+                formatted_content = json.dumps(parsed, indent=2)
+                # Truncate formatted JSON if too long
+                if len(formatted_content) > 500:
+                    formatted_content = self._truncate_text(
+                        formatted_content, max_length=500
+                    )
+            except (json.JSONDecodeError, TypeError):
+                formatted_content = self._truncate_text(content, max_length=300)
+        else:
+            formatted_content = str(content)
+
+        # Output with color styling
+        try:
+            click.echo(
+                click.style(f"[LLM {message_type}] {formatted_content}", fg=color)
+            )
+        except Exception:
+            # Fallback to plain text if click styling fails
+            print(f"[LLM {message_type}] {formatted_content}")
+
+    def _truncate_text(self, text: str, max_length: int = 200) -> str:
+        """Intelligently truncate text showing beginning and end.
+
+        Args:
+            text: Text to truncate
+            max_length: Maximum length of output
+
+        Returns:
+            Truncated text with ellipsis indicator
+        """
+        if len(text) <= max_length:
+            return text
+
+        # Show first and last portions with ellipsis in middle
+        part_length = (max_length - 5) // 2  # Account for " ... " in middle
+        start = text[:part_length].strip()
+        end = text[-part_length:].strip()
+        return f"{start} ... {end}"
 
     def _render_prompt_template(self, template_name: str, **context: Any) -> str:
         """Load and render a prompt template with the given context.
@@ -212,8 +290,45 @@ class LLMClient:
         if max_tokens:
             completion_args["max_tokens"] = max_tokens
 
-        # Execute with retry logic
-        return self._execute_with_retry(completion_args, use_json_mode)
+        # Log verbose information before API call
+        if self.verbose:
+            self._log_verbose("MODEL", f"Using model: {self.model}")
+            self._log_verbose("SYSTEM_PROMPT", system_prompt)
+            self._log_verbose("USER_PROMPT", user_prompt)
+
+        # Track timing
+        start_time = time.time()
+
+        try:
+            # Execute with retry logic
+            result = self._execute_with_retry(completion_args, use_json_mode)
+
+            # Log successful response
+            if self.verbose:
+                duration = time.time() - start_time
+                self._log_verbose("DURATION", f"{duration:.2f} seconds")
+
+                # Log the response content
+                if isinstance(result, dict):
+                    self._log_verbose("RESPONSE", json.dumps(result))
+                else:
+                    self._log_verbose("RESPONSE", str(result))
+
+                # Log token count if available (note: LiteLLM response structure varies by provider)
+                # We'll attempt to extract it but won't fail if not available
+                self._log_verbose(
+                    "TOKEN_COUNT", "Token count not available in current implementation"
+                )
+
+            return result
+
+        except Exception as e:
+            # Log error in verbose mode
+            if self.verbose:
+                duration = time.time() - start_time
+                self._log_verbose("DURATION", f"{duration:.2f} seconds (failed)")
+                self._log_verbose("ERROR", f"API call failed: {str(e)}")
+            raise
 
     def generate_streaming(
         self,
@@ -265,10 +380,49 @@ class LLMClient:
         if max_tokens:
             completion_args["max_tokens"] = max_tokens
 
-        # Execute with retry logic, handling streaming if enabled
-        return self._execute_with_retry_streaming(
-            completion_args, use_json_mode, streaming_callbacks
-        )
+        # Log verbose information before API call
+        if self.verbose:
+            self._log_verbose(
+                "MODEL",
+                f"Using model: {self.model} (streaming: {streaming_callbacks is not None})",
+            )
+            self._log_verbose("SYSTEM_PROMPT", system_prompt)
+            self._log_verbose("USER_PROMPT", user_prompt)
+
+        # Track timing
+        start_time = time.time()
+
+        try:
+            # Execute with retry logic, handling streaming if enabled
+            result = self._execute_with_retry_streaming(
+                completion_args, use_json_mode, streaming_callbacks
+            )
+
+            # Log successful response
+            if self.verbose:
+                duration = time.time() - start_time
+                self._log_verbose("DURATION", f"{duration:.2f} seconds")
+
+                # Log the response content
+                if isinstance(result, dict):
+                    self._log_verbose("RESPONSE", json.dumps(result))
+                else:
+                    self._log_verbose("RESPONSE", str(result))
+
+                # Log token count if available
+                self._log_verbose(
+                    "TOKEN_COUNT", "Token count not available in current implementation"
+                )
+
+            return result
+
+        except Exception as e:
+            # Log error in verbose mode
+            if self.verbose:
+                duration = time.time() - start_time
+                self._log_verbose("DURATION", f"{duration:.2f} seconds (failed)")
+                self._log_verbose("ERROR", f"API call failed: {str(e)}")
+            raise
 
     def _execute_with_retry(
         self, completion_args: dict[str, Any], parse_json: bool
