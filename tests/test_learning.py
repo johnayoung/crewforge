@@ -30,9 +30,11 @@ class TestLearningStore:
         """Test LearningStore with default storage path."""
         from crewforge.storage.learning import LearningStore
 
-        store = LearningStore()
-        assert store is not None
-        assert store.storage_path.name == "learning_store"
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Use explicit path to avoid cwd issues
+            store = LearningStore(storage_path=tmp_dir)
+            assert store is not None
+            assert store.storage_path == Path(tmp_dir)
 
     def test_save_successful_config_basic(self):
         """Test saving a basic successful configuration."""

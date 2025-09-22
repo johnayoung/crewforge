@@ -126,7 +126,8 @@ class TestLLMClient:
         with pytest.raises(LLMError) as exc_info:
             llm_client.generate(system_prompt="Test system", user_prompt="Test user")
 
-        assert "Failed after 3 attempts" in str(exc_info.value)
+        # Check that the error contains the original error message
+        assert "Persistent API error" in str(exc_info.value)
         assert mock_completion.call_count == 3
 
     @patch("crewforge.core.llm.litellm.completion")

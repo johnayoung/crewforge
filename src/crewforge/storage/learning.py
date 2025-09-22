@@ -88,7 +88,11 @@ class LearningStore:
             storage_path: Path to store configurations. Defaults to './learning_store'
         """
         if storage_path is None:
-            storage_path = Path.cwd() / "learning_store"
+            try:
+                storage_path = Path.cwd() / "learning_store"
+            except FileNotFoundError:
+                # Fallback for test environments where cwd might not exist
+                storage_path = Path("/tmp") / "learning_store"
 
         self.storage_path = Path(storage_path)
         self._ensure_storage_structure()

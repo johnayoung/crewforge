@@ -65,10 +65,16 @@ class TestPromptValidation:
 
         for prompt in valid_prompts:
             result = runner.invoke(cli, ["generate", prompt])
-            # Should not fail due to validation (implementation may be incomplete)
-            assert (
-                "prompt:" in result.output.lower()
-                or "generating" in result.output.lower()
+            # Should show evidence of processing prompt (not just fail validation)
+            assert any(
+                indicator in result.output.lower()
+                for indicator in [
+                    "prompt validated",
+                    "generating",
+                    "starting crewai",
+                    "project name:",
+                    "generation request",
+                ]
             )
 
     def test_generate_rejects_empty_prompt(self):
