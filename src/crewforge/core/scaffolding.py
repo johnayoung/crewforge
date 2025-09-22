@@ -422,9 +422,10 @@ class ProjectScaffolder:
             # If verbose mode is enabled, ensure we have a verbose-capable generation engine
             if verbose and not getattr(self.generation_engine, "verbose", False):
                 # Create a new generation engine with verbose mode enabled
-                # Use the same LLM client to maintain consistency
+                # Create a new LLM client with verbose mode as well
                 self.generation_engine = GenerationEngine(
-                    llm_client=self.generation_engine.llm_client, verbose=True
+                    llm_client=None,
+                    verbose=True,  # Let GenerationEngine create a new verbose LLMClient
                 )
 
             # Step 1: Create CrewAI project scaffolding FIRST
