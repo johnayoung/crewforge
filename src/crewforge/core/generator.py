@@ -1,6 +1,13 @@
 """Agentic AI Generation Engine for CrewForge.
 
-This module implements the core generation logic that analyzes prompts and
+This module impleme        system_prompt = self.template_engine.render_template(
+            "prompts/analyze_prompt_system.j2"
+        )
+
+        user_prompt = self.template_engine.render_template(
+            "prompts/analyze_prompt_user.j2",
+            prompt=prompt
+        )ration logic that analyzes prompts and
 creates CrewAI configurations using LLM calls with quality controls.
 """
 
@@ -8,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .llm import LLMClient
 from .progress import StreamingCallbacks
+from .templates import TemplateEngine
 from ..models import AgentConfig, TaskConfig
 
 
@@ -39,6 +47,9 @@ class GenerationEngine:
         if llm_client is None:
             llm_client = LLMClient()
         self.llm_client = llm_client
+
+        # Initialize template engine for prompt rendering
+        self.template_engine = TemplateEngine()
 
     def analyze_prompt(
         self, prompt: str, streaming_callbacks: Optional[StreamingCallbacks] = None
@@ -138,33 +149,22 @@ Identify the business context, required agent roles, key objectives, and tools n
         Raises:
             GenerationError: If agent generation fails
         """
-        system_prompt = """You are an expert in designing CrewAI multi-agent systems. Your task is to create 
-detailed agent configurations based on business requirements analysis.
-
-For each agent, provide:
-- role: A concise, descriptive role name (e.g., "Content Researcher", "Data Analyst")
-- goal: A clear statement of what the agent aims to accomplish
-- backstory: A brief background that establishes the agent's expertise and motivation
-- tools: Array of tool names the agent should have access to
-
-Ensure agents have complementary skills that work together effectively as a crew.
-
-Respond with a JSON object containing:
-- agents: Array of agent objects with role, goal, backstory, and tools fields"""
+        system_prompt = self.template_engine.render_template(
+            "prompts/generate_agents_system.j2"
+        )
 
         business_context = prompt_analysis.get("business_context", "")
         required_roles = prompt_analysis.get("required_roles", [])
         objectives = prompt_analysis.get("objectives", [])
         tools_needed = prompt_analysis.get("tools_needed", [])
 
-        user_prompt = f"""Based on this analysis, create detailed agent configurations:
-
-Business Context: {business_context}
-Required Roles: {', '.join(required_roles)}
-Key Objectives: {', '.join(objectives)}
-Tools Needed: {', '.join(tools_needed)}
-
-Create agents that can work together effectively to accomplish these objectives."""
+        user_prompt = self.template_engine.render_template(
+            "prompts/generate_agents_user.j2",
+            business_context=business_context,
+            required_roles=required_roles,
+            objectives=objectives,
+            tools_needed=tools_needed,
+        )
 
         try:
             result = self.llm_client.generate(
@@ -226,32 +226,20 @@ Create agents that can work together effectively to accomplish these objectives.
         Raises:
             GenerationError: If task generation fails
         """
-        system_prompt = """You are an expert in designing CrewAI task workflows. Your task is to create 
-detailed task configurations that leverage the available agents effectively.
-
-For each task, provide:
-- description: Clear description of what the task should accomplish
-- expected_output: Detailed description of the expected output format and content  
-- agent: The role name of the agent responsible for executing this task
-- context: Optional array of task descriptions this task depends on (for task sequencing)
-- async_execution: Boolean indicating if task can run asynchronously
-
-Ensure tasks are sequenced logically and leverage each agent's strengths.
-
-Respond with a JSON object containing:
-- tasks: Array of task objects with description, expected_output, agent, and optional context fields"""
+        system_prompt = self.template_engine.render_template(
+            "prompts/generate_tasks_system.j2"
+        )
 
         agent_roles = [agent.role for agent in agents]
         objectives = prompt_analysis.get("objectives", [])
         business_context = prompt_analysis.get("business_context", "")
 
-        user_prompt = f"""Based on these agents and objectives, create detailed task configurations:
-
-Available Agents: {', '.join(agent_roles)}
-Key Objectives: {', '.join(objectives)}
-Business Context: {business_context}
-
-Create tasks that work together to accomplish the objectives, with proper agent assignments and task sequencing."""
+        user_prompt = self.template_engine.render_template(
+            "prompts/generate_tasks_user.j2",
+            agent_roles=agent_roles,
+            objectives=objectives,
+            business_context=business_context,
+        )
 
         try:
             result = self.llm_client.generate(
@@ -321,34 +309,14 @@ Create tasks that work together to accomplish the objectives, with proper agent 
         Raises:
             GenerationError: If tool selection fails
         """
-        system_prompt = """You are an expert in CrewAI tool selection and configuration. Your task is to select 
-appropriate tools from the CrewAI library based on capability requirements.
+        system_prompt = self.template_engine.render_template(
+            "prompts/select_tools_system.j2"
+        )
 
-Available CrewAI Tools:
-- SerperDevTool: Web search capabilities using Google Search
-- FileWriterTool: Write content to files
-- DirectoryReadTool: Read directory contents and structure
-- FileReadTool: Read file contents
-- CodeInterpreterTool: Execute Python code and scripts
-- TXTSearchTool: Search within text files
-- CSVSearchTool: Search within CSV files  
-- JSONSearchTool: Search within JSON files
-- MDXSearchTool: Search within MDX/Markdown files
-- PDFSearchTool: Search within PDF documents
-- PGSearchTool: Search within PostgreSQL databases
-- WebsiteSearchTool: Search within website content
-
-For each required capability, recommend the most appropriate tool(s) with justification.
-
-Respond with a JSON object containing:
-- selected_tools: Array of objects with "name" (tool class name) and "reason" (justification)
-- unavailable_tools: Array of capability names that cannot be fulfilled with available tools"""
-
-        user_prompt = f"""Select appropriate CrewAI tools for these capabilities:
-
-Required Capabilities: {', '.join(tools_needed)}
-
-Choose the most suitable tools from the available CrewAI library and explain your selections."""
+        user_prompt = self.template_engine.render_template(
+            "prompts/select_tools_user.j2",
+            tools_needed=tools_needed,
+        )
 
         try:
             result = self.llm_client.generate(

@@ -21,6 +21,7 @@
 ## Post-MVP Enhancement: Template-Based Prompt Management
 
 - [x] **Commit 14**: Jinja2 Template-Based Prompt System ✅ [2025-09-22 16:15]
+- [x] **Commit 15**: Refactor Generator Prompts to Jinja2 Templates ✅ [2025-09-22 16:45]
 
 ## Implementation Sequence
 
@@ -404,4 +405,34 @@
 - Added CLI progress callback functions for real-time step tracking with progress percentages and status indicators
 - Created streaming callback system for live LLM response display during AI generation phases
 - Implemented comprehensive test suite covering progress integration, CLI display, and streaming functionality
+
+### Commit 15: Refactor Generator Prompts to Jinja2 Templates
+
+**Goal**: Refactor hardcoded prompt strings in GenerationEngine to use Jinja2 templates for maintainable prompt management.
+
+**Requirements**:
+1. Extract all hardcoded system and user prompts from `src/crewforge/core/generator.py`:
+   - analyze_prompt system/user prompts → `analyze_prompt_system.j2` & `analyze_prompt_user.j2`
+   - generate_agents system/user prompts → `generate_agents_system.j2` & `generate_agents_user.j2`
+   - generate_tasks system/user prompts → `generate_tasks_system.j2` & `generate_tasks_user.j2`
+   - select_tools system/user prompts → `select_tools_system.j2` & `select_tools_user.j2`
+2. Create template files in `src/crewforge/templates/prompts/`:
+   - Use Jinja2 syntax for variable substitution (e.g., `{{ prompt }}`, `{{ required_roles|join(', ') }}`)
+   - Maintain exact prompt content and structure
+   - Ensure proper variable passing and template rendering
+3. Refactor GenerationEngine class:
+   - Add TemplateEngine instance for prompt rendering
+   - Replace hardcoded strings with template.render_template() calls
+   - Pass all necessary variables to templates (prompt, business_context, required_roles, etc.)
+   - Maintain existing method signatures and return types
+
+**Validation**: All generation methods work with template-based prompts, variables render correctly, generated output quality maintained ✅ [2025-09-22 16:45]
+
+**Implementation Details**:
+- Created 8 new template files covering all generation prompts with proper Jinja2 syntax
+- Added TemplateEngine import and instantiation to GenerationEngine constructor
+- Refactored all prompt rendering to use template_engine.render_template() with context variables
+- Used Jinja2 filters like `|join(', ')` for list formatting to maintain prompt structure
+- Preserved exact prompt content while making it maintainable through external template files
+- Maintained all existing method signatures for seamless integration with existing codebase
 - Added error-resilient callback handling to prevent interruption of generation pipeline
