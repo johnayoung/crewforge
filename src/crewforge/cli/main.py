@@ -12,6 +12,13 @@ import click
 from pydantic import ValidationError
 
 from crewforge.models import GenerationRequest
+from crewforge.core.progress import (
+    ProgressTracker,
+    ProgressStep,
+    ProgressEvent,
+    ProgressStatus,
+    StreamingCallbacks,
+)
 from crewforge.core.scaffolding import (
     ProjectScaffolder,
     ScaffoldingError,
@@ -232,6 +239,39 @@ def cli():
     pass
 
 
+def create_progress_callback():
+    """Create a callback function for progress tracking display."""
+
+    def progress_callback(event: ProgressEvent) -> None:
+        """Handle progress events and display real-time feedback."""
+        if event.status == ProgressStatus.IN_PROGRESS:
+            click.echo(
+                f"⏳ Step {event.step_id}: {event.description}... ({event.progress_percentage:.1f}% complete)"
+            )
+        elif event.status == ProgressStatus.COMPLETED:
+            click.echo(
+                f"✅ {event.description} - Complete ({event.progress_percentage:.1f}%)"
+            )
+        elif event.status == ProgressStatus.FAILED:
+            click.echo(f"❌ {event.description} - Failed: {event.error_message}")
+
+    return progress_callback
+
+
+def create_streaming_callbacks():
+    """Create streaming callbacks for LLM token display."""
+
+    def on_token(token: str) -> None:
+        """Handle individual tokens from LLM streaming."""
+        click.echo(f"   📝 {token}", nl=False)
+
+    def on_completion(response: str) -> None:
+        """Handle completion of LLM streaming response."""
+        click.echo("")  # New line after streaming
+
+    return StreamingCallbacks(on_token=on_token, on_completion=on_completion)
+
+
 @cli.command()
 @click.argument("prompt")
 @click.option("--name", help="Name for the generated project")
@@ -277,9 +317,9 @@ def generate(prompt: str, name: Optional[str] = None):
         except Exception as e:
             raise click.ClickException(f"Failed to initialize scaffolder: {e}")
 
-        # Step 5: Generate complete CrewAI project
+        # Step 5: Generate complete CrewAI project with progress tracking
         click.echo("")
-        click.echo("🤖 Analyzing prompt for crew requirements...")
+        click.echo("🤖 Starting CrewAI project generation...")
 
         # Check if API key is available before proceeding
         if not os.getenv("OPENAI_API_KEY"):
@@ -290,20 +330,46 @@ def generate(prompt: str, name: Optional[str] = None):
             )
 
         try:
+            # Create progress tracker with initial steps
+            initial_steps = [
+                ProgressStep(
+                    "analyze_prompt", "Analyzing prompt for requirements", 5.0
+                ),
+                ProgressStep(
+                    "generate_agents", "Generating agent configurations", 15.0
+                ),
+                ProgressStep("generate_tasks", "Creating task definitions", 10.0),
+                ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
+                ProgressStep(
+                    "create_scaffold", "Creating CrewAI project structure", 8.0
+                ),
+                ProgressStep("populate_files", "Populating project files", 4.0),
+            ]
+
+            progress_tracker = ProgressTracker(initial_steps)
+            progress_callback = create_progress_callback()
+            progress_tracker.add_callback(progress_callback)
+
+            # Create streaming callbacks for real-time LLM response display
+            streaming_callbacks = create_streaming_callbacks()
+
             # Generate the complete project using scaffolding
             current_dir = Path.cwd()
 
-            # Add progress indication with timeout handling
-            click.echo("   ⏳ Making API calls to generate configurations...")
+            click.echo(
+                "🔄 Generation pipeline started with real-time progress tracking..."
+            )
+            click.echo("")
 
-            project_path = scaffolder.generate_project(generation_request, current_dir)
+            project_path = scaffolder.generate_project(
+                generation_request,
+                current_dir,
+                progress_tracker=progress_tracker,
+                streaming_callbacks=streaming_callbacks,
+            )
 
-            click.echo("🧠 Generated agent configurations")
-            click.echo("📋 Created task definitions")
-            click.echo("🔧 Selected appropriate tools")
-            click.echo("🏗️ Created CrewAI project structure")
-            click.echo("🎯 Populated project files")
-            click.echo("✅ Project generation completed")
+            click.echo("")
+            click.echo("✅ Project generation completed successfully!")
 
         except LLMAuthenticationError as e:
             raise click.ClickException(

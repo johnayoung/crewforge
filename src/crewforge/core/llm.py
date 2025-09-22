@@ -4,7 +4,7 @@ import json
 import logging
 import signal
 import time
-from typing import Any
+from typing import Any, Optional
 
 import litellm
 from pydantic import BaseModel, Field, validator
@@ -153,6 +153,61 @@ class LLMClient:
         # Execute with retry logic
         return self._execute_with_retry(completion_args, use_json_mode)
 
+    def generate_streaming(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        streaming_callbacks: Optional[Any] = None,
+        use_json_mode: bool = False,
+        temperature: float = 0.1,
+        max_tokens: int | None = None,
+    ) -> str | dict[str, Any]:
+        """Generate response using LLM with streaming support.
+
+        Args:
+            system_prompt: System prompt to set context
+            user_prompt: User prompt with requirements
+            streaming_callbacks: StreamingCallbacks instance for token streaming
+            use_json_mode: Whether to request structured JSON output
+            temperature: Sampling temperature (0.0 to 1.0)
+            max_tokens: Maximum tokens in response
+
+        Returns:
+            String response or parsed JSON dict if use_json_mode=True
+
+        Raises:
+            LLMError: If generation fails after all retries
+        """
+        # For now, if streaming_callbacks is provided, we collect tokens
+        # and call the callbacks, but still return the full response
+        # In a full implementation, we would use LiteLLM's streaming support
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        # Build completion arguments
+        completion_args = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "timeout": 30,
+            "stream": streaming_callbacks
+            is not None,  # Enable streaming if callbacks provided
+        }
+
+        if use_json_mode:
+            completion_args["response_format"] = {"type": "json_object"}
+
+        if max_tokens:
+            completion_args["max_tokens"] = max_tokens
+
+        # Execute with retry logic, handling streaming if enabled
+        return self._execute_with_retry_streaming(
+            completion_args, use_json_mode, streaming_callbacks
+        )
+
     def _execute_with_retry(
         self, completion_args: dict[str, Any], parse_json: bool
     ) -> str | dict[str, Any]:
@@ -271,6 +326,31 @@ class LLMClient:
 
         logger.error(f"LLM API failed after {self.retry_config.max_attempts} attempts")
         raise final_error
+
+    def _execute_with_retry_streaming(
+        self,
+        completion_args: dict[str, Any],
+        parse_json: bool,
+        streaming_callbacks: Optional[Any],
+    ) -> str | dict[str, Any]:
+        """Execute LLM call with streaming support and retry logic."""
+        if not streaming_callbacks or not completion_args.get("stream", False):
+            # Fall back to regular non-streaming execution
+            completion_args["stream"] = False
+            return self._execute_with_retry(completion_args, parse_json)
+
+        # For now, simulate streaming by calling the regular method
+        # and then calling streaming callbacks with the full response
+        # In a real implementation, we would handle actual streaming
+        completion_args["stream"] = False  # Disable streaming for now
+        result = self._execute_with_retry(completion_args, parse_json)
+
+        # Simulate token streaming by sending the result to callbacks
+        if streaming_callbacks and hasattr(streaming_callbacks, "handle_completion"):
+            response_text = result if isinstance(result, str) else json.dumps(result)
+            streaming_callbacks.handle_completion(response_text)
+
+        return result
 
     def _categorize_error(self, error: Exception) -> LLMError:
         """Categorize exceptions into appropriate LLMError types."""

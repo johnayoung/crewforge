@@ -95,7 +95,11 @@ class StreamingCallbacks:
             token: Token string to handle
         """
         if self.on_token:
-            self.on_token(token)
+            try:
+                self.on_token(token)
+            except Exception:
+                # Silently ignore callback errors to not interrupt streaming
+                pass
 
     def handle_completion(self, response: str) -> None:
         """Handle completion of LLM streaming response.
@@ -104,7 +108,11 @@ class StreamingCallbacks:
             response: Complete response string
         """
         if self.on_completion:
-            self.on_completion(response)
+            try:
+                self.on_completion(response)
+            except Exception:
+                # Silently ignore callback errors to not interrupt streaming
+                pass
 
 
 class ProgressTracker:

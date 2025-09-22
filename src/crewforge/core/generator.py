@@ -7,6 +7,7 @@ creates CrewAI configurations using LLM calls with quality controls.
 from typing import Any, Dict, List, Optional, Tuple
 
 from .llm import LLMClient
+from .progress import StreamingCallbacks
 from ..models import AgentConfig, TaskConfig
 
 
@@ -39,7 +40,9 @@ class GenerationEngine:
             llm_client = LLMClient()
         self.llm_client = llm_client
 
-    def analyze_prompt(self, prompt: str) -> Dict[str, Any]:
+    def analyze_prompt(
+        self, prompt: str, streaming_callbacks: Optional[StreamingCallbacks] = None
+    ) -> Dict[str, Any]:
         """Extract crew requirements from natural language prompt.
 
         Uses structured LLM output to identify business context, required roles,
@@ -77,12 +80,21 @@ Focus on identifying distinct agent roles that would work together effectively."
 Identify the business context, required agent roles, key objectives, and tools needed."""
 
         try:
-            result = self.llm_client.generate(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                use_json_mode=True,
-                temperature=0.1,
-            )
+            if streaming_callbacks:
+                result = self.llm_client.generate_streaming(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    streaming_callbacks=streaming_callbacks,
+                    use_json_mode=True,
+                    temperature=0.1,
+                )
+            else:
+                result = self.llm_client.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    use_json_mode=True,
+                    temperature=0.1,
+                )
 
             # Validate the response structure
             if not isinstance(result, dict):
@@ -107,7 +119,11 @@ Identify the business context, required agent roles, key objectives, and tools n
                 f"Failed to analyze prompt: {str(e)}", original_exception=e
             )
 
-    def generate_agents(self, prompt_analysis: Dict[str, Any]) -> List[AgentConfig]:
+    def generate_agents(
+        self,
+        prompt_analysis: Dict[str, Any],
+        streaming_callbacks: Optional[StreamingCallbacks] = None,
+    ) -> List[AgentConfig]:
         """Generate agent configurations based on prompt analysis.
 
         Creates appropriate agent roles, goals, and backstories using LLM
@@ -190,7 +206,10 @@ Create agents that can work together effectively to accomplish these objectives.
             )
 
     def generate_tasks(
-        self, agents: List[AgentConfig], prompt_analysis: Dict[str, Any]
+        self,
+        agents: List[AgentConfig],
+        prompt_analysis: Dict[str, Any],
+        streaming_callbacks: Optional[StreamingCallbacks] = None,
     ) -> List[TaskConfig]:
         """Generate task definitions based on agents and requirements.
 
@@ -282,7 +301,11 @@ Create tasks that work together to accomplish the objectives, with proper agent 
                 f"Failed to generate tasks: {str(e)}", original_exception=e
             )
 
-    def select_tools(self, tools_needed: List[str]) -> Dict[str, Any]:
+    def select_tools(
+        self,
+        tools_needed: List[str],
+        streaming_callbacks: Optional[StreamingCallbacks] = None,
+    ) -> Dict[str, Any]:
         """Select appropriate CrewAI tools based on requirements.
 
         Chooses tools from CrewAI library and validates their availability.
