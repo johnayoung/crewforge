@@ -79,22 +79,3 @@ class {{project_name|title|replace('-', '')|replace('_', '')}}():
             verbose=True,
             # process=Process.hierarchical, # In case you want to use a hierarchical process: https://docs.crewai.com/concepts/processes#hierarchical_process
         )
-            {% for agent in crew_config.agents %}{{agent.role|lower|regex_replace('[^a-z0-9\s]', '')|replace(' ', '_')|replace('-', '_')}}{{ ', ' if not loop.last else '' }}{% endfor %}
-        )
-{% endfor %}
-
-        return Crew(
-            agents=[
-                {% for agent in crew_config.agents %}{{agent.role|lower|regex_replace('[^a-z0-9\s]', '')|replace(' ', '_')|replace('-', '_')}}{{ ', ' if not loop.last else '' }}
-                {% endfor %}
-            ],
-            tasks=[
-                {% for task in crew_config.tasks %}{{task.description[:50]|lower|regex_replace('[^a-z0-9\s]', '')|replace(' ', '_')|truncate(30, true, '')}}{{ ', ' if not loop.last else '' }}
-                {% endfor %}
-            ],
-            verbose={{crew_config.verbose|lower}},
-            process=Process.{{crew_config.process.upper()}},{% if crew_config.max_rpm %}
-            max_rpm={{crew_config.max_rpm}},{% endif %}{% if crew_config.full_output %}
-            full_output={{crew_config.full_output|lower}},{% endif %}{% if crew_config.language and crew_config.language != "en" %}
-            language="{{crew_config.language}}",{% endif %}
-        )
