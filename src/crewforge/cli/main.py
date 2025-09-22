@@ -207,12 +207,14 @@ def check_directory_conflicts(project_name: str) -> None:
         click.ClickException: If there are directory issues
     """
     current_dir = Path.cwd()
-    project_path = current_dir / project_name
+    # CrewAI normalizes hyphens to underscores in directory names
+    normalized_name = project_name.replace("-", "_")
+    project_path = current_dir / normalized_name
 
     # Check if directory already exists
     if project_path.exists():
         raise click.ClickException(
-            f"Directory '{project_name}' already exists in {current_dir}. "
+            f"Directory '{normalized_name}' already exists in {current_dir}. "
             f"Please choose a different project name or remove the existing directory."
         )
 

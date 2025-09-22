@@ -120,6 +120,9 @@ class ProjectScaffolder:
             # Create default progress tracker with standard generation steps
             default_steps = [
                 ProgressStep(
+                    "create_scaffold", "Creating CrewAI project structure", 8.0
+                ),
+                ProgressStep(
                     "analyze_prompt", "Analyzing prompt for requirements", 5.0
                 ),
                 ProgressStep(
@@ -127,9 +130,6 @@ class ProjectScaffolder:
                 ),
                 ProgressStep("generate_tasks", "Creating task definitions", 10.0),
                 ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
-                ProgressStep(
-                    "create_scaffold", "Creating CrewAI project structure", 8.0
-                ),
                 ProgressStep("populate_files", "Populating project files", 4.0),
             ]
             progress_tracker = ProgressTracker(default_steps)
@@ -137,6 +137,19 @@ class ProjectScaffolder:
         self.generation_engine = generation_engine
         self.template_engine = template_engine
         self.progress_tracker = progress_tracker
+
+    def _normalize_project_name(self, project_name: str) -> str:
+        """Convert project name to the directory name that CrewAI will create.
+
+        CrewAI converts hyphens to underscores in directory names.
+
+        Args:
+            project_name: Original project name (e.g., "content-research")
+
+        Returns:
+            Normalized directory name (e.g., "content_research")
+        """
+        return project_name.replace("-", "_")
 
     def create_crewai_project(self, project_name: str, parent_dir: Path) -> Path:
         """Create a new CrewAI project using the CrewAI CLI.
@@ -162,15 +175,20 @@ class ProjectScaffolder:
         if not os.access(parent_dir, os.W_OK):
             raise FileSystemError("Parent directory is not writable", parent_dir)
 
-        # Check if project already exists
-        project_path = parent_dir / project_name
+        # Check if project already exists (using normalized name that CrewAI will create)
+        normalized_name = self._normalize_project_name(project_name)
+        project_path = parent_dir / normalized_name
         if project_path.exists():
             raise FileSystemError("Project directory already exists", project_path)
 
         # Check if CrewAI CLI is available
         try:
             result = subprocess.run(
-                ["crewai", "--version"], capture_output=True, text=True, timeout=10
+                ["crewai", "--version"],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=10,
             )
             if result.returncode != 0:
                 raise CrewAICommandError(
@@ -205,6 +223,7 @@ class ProjectScaffolder:
                 cwd=parent_dir,
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,  # Prevent hanging on stdin reads
                 timeout=120,  # 2 minute timeout
                 check=False,
             )
@@ -222,7 +241,7 @@ class ProjectScaffolder:
                 )
 
             # Verify basic project structure
-            expected_files = ["pyproject.toml", f"{project_name}/__init__.py"]
+            expected_files = ["pyproject.toml", f"src/{normalized_name}/__init__.py"]
             for expected_file in expected_files:
                 file_path = project_path / expected_file
                 if not file_path.exists():
@@ -367,11 +386,11 @@ class ProjectScaffolder:
         """Generate a complete CrewAI project from a generation request.
 
         This orchestrates the entire generation pipeline:
-        1. Analyze the prompt for requirements
-        2. Generate agent configurations
-        3. Generate task definitions
-        4. Select appropriate tools
-        5. Create CrewAI project scaffolding
+        1. Create CrewAI project scaffolding first
+        2. Analyze the prompt for requirements
+        3. Generate agent configurations
+        4. Generate task definitions
+        5. Select appropriate tools
         6. Populate project files with generated content
 
         Args:
@@ -388,64 +407,7 @@ class ProjectScaffolder:
         project_path = None
 
         try:
-            # Step 1: Analyze prompt for crew requirements
-            self.progress_tracker.start_step("analyze_prompt")
-
-            try:
-                prompt_analysis = self.generation_engine.analyze_prompt(
-                    request.prompt, streaming_callbacks
-                )
-                self.progress_tracker.complete_step("analyze_prompt")
-            except Exception as e:
-                self.progress_tracker.fail_step("analyze_prompt", str(e))
-                raise ScaffoldingError(
-                    f"Failed to analyze prompt: {str(e)}", original_exception=e
-                )
-
-            # Step 2: Generate agent configurations
-            self.progress_tracker.start_step("generate_agents")
-
-            try:
-                agents = self.generation_engine.generate_agents(
-                    prompt_analysis, streaming_callbacks
-                )
-                self.progress_tracker.complete_step("generate_agents")
-            except Exception as e:
-                self.progress_tracker.fail_step("generate_agents", str(e))
-                raise ScaffoldingError(
-                    f"Failed to generate agents: {str(e)}", original_exception=e
-                )
-
-            # Step 3: Generate task definitions
-            self.progress_tracker.start_step("generate_tasks")
-
-            try:
-                tasks = self.generation_engine.generate_tasks(
-                    agents, prompt_analysis, streaming_callbacks
-                )
-                self.progress_tracker.complete_step("generate_tasks")
-            except Exception as e:
-                self.progress_tracker.fail_step("generate_tasks", str(e))
-                raise ScaffoldingError(
-                    f"Failed to generate tasks: {str(e)}", original_exception=e
-                )
-
-            # Step 4: Select appropriate tools
-            self.progress_tracker.start_step("select_tools")
-
-            try:
-                tools_needed = prompt_analysis.get("tools_needed", [])
-                tools = self.generation_engine.select_tools(
-                    tools_needed, streaming_callbacks
-                )
-                self.progress_tracker.complete_step("select_tools")
-            except Exception as e:
-                self.progress_tracker.fail_step("select_tools", str(e))
-                raise ScaffoldingError(
-                    f"Failed to select tools: {str(e)}", original_exception=e
-                )
-
-            # Step 5: Create CrewAI project scaffolding
+            # Step 1: Create CrewAI project scaffolding FIRST
             self.progress_tracker.start_step("create_scaffold")
 
             try:
@@ -460,6 +422,63 @@ class ProjectScaffolder:
                 raise ScaffoldingError(
                     f"Failed to create project structure: {str(e)}",
                     original_exception=e,
+                )
+
+            # Step 2: Analyze prompt for crew requirements
+            self.progress_tracker.start_step("analyze_prompt")
+
+            try:
+                prompt_analysis = self.generation_engine.analyze_prompt(
+                    request.prompt, streaming_callbacks
+                )
+                self.progress_tracker.complete_step("analyze_prompt")
+            except Exception as e:
+                self.progress_tracker.fail_step("analyze_prompt", str(e))
+                raise ScaffoldingError(
+                    f"Failed to analyze prompt: {str(e)}", original_exception=e
+                )
+
+            # Step 3: Generate agent configurations
+            self.progress_tracker.start_step("generate_agents")
+
+            try:
+                agents = self.generation_engine.generate_agents(
+                    prompt_analysis, streaming_callbacks
+                )
+                self.progress_tracker.complete_step("generate_agents")
+            except Exception as e:
+                self.progress_tracker.fail_step("generate_agents", str(e))
+                raise ScaffoldingError(
+                    f"Failed to generate agents: {str(e)}", original_exception=e
+                )
+
+            # Step 4: Generate task definitions
+            self.progress_tracker.start_step("generate_tasks")
+
+            try:
+                tasks = self.generation_engine.generate_tasks(
+                    agents, prompt_analysis, streaming_callbacks
+                )
+                self.progress_tracker.complete_step("generate_tasks")
+            except Exception as e:
+                self.progress_tracker.fail_step("generate_tasks", str(e))
+                raise ScaffoldingError(
+                    f"Failed to generate tasks: {str(e)}", original_exception=e
+                )
+
+            # Step 5: Select appropriate tools
+            self.progress_tracker.start_step("select_tools")
+
+            try:
+                tools_needed = prompt_analysis.get("tools_needed", [])
+                tools = self.generation_engine.select_tools(
+                    tools_needed, streaming_callbacks
+                )
+                self.progress_tracker.complete_step("select_tools")
+            except Exception as e:
+                self.progress_tracker.fail_step("select_tools", str(e))
+                raise ScaffoldingError(
+                    f"Failed to select tools: {str(e)}", original_exception=e
                 )
 
             # Step 6: Populate project files with generated content
@@ -477,9 +496,30 @@ class ProjectScaffolder:
             return project_path
 
         except Exception as e:
-            # Clean up on failure
-            if project_path and project_path.exists():
+            # Only clean up project if scaffolding failed or if AI generation succeeded
+            # but file population failed. Don't clean up if only AI generation failed.
+            should_cleanup = False
+
+            if isinstance(e, ScaffoldingError):
+                # Check if this was a scaffolding failure or just AI generation failure
+                error_msg = str(e)
+                if "Failed to create project structure" in error_msg:
+                    # Scaffolding itself failed, clean up
+                    should_cleanup = True
+                elif "Failed to populate project files" in error_msg:
+                    # File population failed after successful scaffolding and AI generation
+                    # Clean up to avoid leaving partially populated project
+                    should_cleanup = True
+                # For AI generation failures (analyze_prompt, generate_agents, etc.)
+                # we keep the scaffolding so user has a working project structure
+
+            if should_cleanup and project_path and project_path.exists():
                 shutil.rmtree(project_path, ignore_errors=True)
+                logger.info(f"Cleaned up failed project at {project_path}")
+            elif project_path and project_path.exists():
+                logger.info(
+                    f"Preserving project scaffolding at {project_path} despite generation failure"
+                )
 
             if isinstance(e, ScaffoldingError):
                 raise
