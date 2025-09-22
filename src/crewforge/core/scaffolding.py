@@ -198,8 +198,8 @@ class ProjectScaffolder:
         try:
             logger.info(f"Creating CrewAI project '{project_name}' in {parent_dir}")
 
-            # Run the crewai create crew command with timeout
-            command = ["crewai", "create", "crew", project_name]
+            # Run the crewai create crew command with timeout and skip provider prompt
+            command = ["crewai", "create", "crew", project_name, "--skip_provider"]
             result = subprocess.run(
                 command,
                 cwd=parent_dir,
