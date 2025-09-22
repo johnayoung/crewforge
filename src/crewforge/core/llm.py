@@ -156,17 +156,6 @@ class LLMClient:
                 f"Failed to render prompt template {template_name}: {str(e)}"
             ) from e
 
-    def get_system_prompt(self) -> str:
-        """Get the CrewAI system prompt from template.
-
-        Returns:
-            System prompt string
-
-        Raises:
-            LLMError: If template loading fails
-        """
-        return self._render_prompt_template("crewai_system_prompt.j2")
-
     def format_user_prompt(self, user_requirements: str) -> str:
         """Format user requirements using template.
 
@@ -481,24 +470,6 @@ class LLMClient:
 
         # Generic LLM error
         return LLMError(f"LLM API error: {str(error)}", original_exception=error)
-
-
-# Prompt engineering templates and utilities
-
-
-def get_crewai_system_prompt(llm_client: LLMClient) -> str:
-    """Get the CrewAI system prompt from template.
-
-    Args:
-        llm_client: LLM client instance with initialized prompt environment
-
-    Returns:
-        Rendered system prompt string
-
-    Raises:
-        LLMError: If template loading fails
-    """
-    return llm_client._render_prompt_template("crewai_system_prompt.j2")
 
 
 def format_user_prompt(
