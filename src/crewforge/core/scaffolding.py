@@ -279,6 +279,7 @@ class ProjectScaffolder:
         agents: List[AgentConfig],
         tasks: List[TaskConfig],
         tools: Dict[str, Any],
+        project_name: str,
     ) -> None:
         """Populate CrewAI project files with generated configurations.
 
@@ -316,25 +317,43 @@ class ProjectScaffolder:
             self._check_disk_space(module_path)
 
             # Populate each file type using templates with individual error handling
+            # Modern CrewAI uses YAML configs and a single crew.py file
+            config_dir = module_path / "config"
+            tools_dir = module_path / "tools"
             file_operations = [
-                ("agents.py.j2", "agents.py", {"agents": agents}),
-                ("tasks.py.j2", "tasks.py", {"tasks": tasks, "agents": agents}),
-                ("tools.py.j2", "tools.py", {"tools": tools["selected_tools"]}),
+                # YAML configuration files in config/ directory
+                ("agents.yaml.j2", config_dir / "agents.yaml", {"agents": agents}),
+                (
+                    "tasks.yaml.j2",
+                    config_dir / "tasks.yaml",
+                    {"tasks": tasks, "agents": agents},
+                ),
+                # Main crew.py file (overwrites the scaffold version)
                 (
                     "crew.py.j2",
-                    "crew.py",
+                    module_path / "crew.py",
                     {
                         "agents": agents,
                         "tasks": tasks,
                         "tools": tools["selected_tools"],
+                        "project_name": project_name,
                     },
+                ),
+                # Custom tools (if any) - placed in tools/ directory
+                (
+                    "tools.py.j2",
+                    tools_dir / "custom_tool.py",
+                    {"tools": tools["selected_tools"]},
                 ),
             ]
 
-            for template_name, output_file, template_vars in file_operations:
+            for template_name, output_path, template_vars in file_operations:
                 try:
-                    output_path = module_path / output_file
+                    # output_path is now the full path, not relative to module_path
                     logger.debug(f"Populating {output_path}")
+
+                    # Ensure parent directory exists
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
 
                     # Backup existing file if it exists
                     backup_path = None
@@ -354,16 +373,16 @@ class ProjectScaffolder:
                     if backup_path and backup_path.exists():
                         backup_path.unlink()
 
-                    logger.debug(f"Successfully populated {output_file}")
+                    logger.debug(f"Successfully populated {output_path.name}")
 
                 except Exception as e:
                     # Restore backup if it exists
                     if backup_path and backup_path.exists():
                         shutil.move(str(backup_path), str(output_path))
-                        logger.warning(f"Restored backup for {output_file}")
+                        logger.warning(f"Restored backup for {output_path.name}")
 
                     raise FileSystemError(
-                        f"Failed to populate {output_file}", output_path, e
+                        f"Failed to populate {output_path.name}", output_path, e
                     )
 
             logger.info("Successfully populated all project files")
@@ -485,7 +504,9 @@ class ProjectScaffolder:
             self.progress_tracker.start_step("populate_files")
 
             try:
-                self.populate_project_files(project_path, agents, tasks, tools)
+                self.populate_project_files(
+                    project_path, agents, tasks, tools, request.project_name
+                )
                 self.progress_tracker.complete_step("populate_files")
             except Exception as e:
                 self.progress_tracker.fail_step("populate_files", str(e))
