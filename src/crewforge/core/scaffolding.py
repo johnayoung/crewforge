@@ -310,28 +310,18 @@ class ProjectScaffolder:
             # Check disk space before operations
             self._check_disk_space(module_path)
 
-            # Populate each file type using templates with individual error handling
-            # Modern CrewAI uses YAML configs and a single crew.py file
+            # Populate each file type - crew.py uses LLM generation, others use templates
             config_dir = module_path / "config"
             tools_dir = module_path / "tools"
-            file_operations = [
+
+            # Handle YAML configuration files and custom tools using templates
+            template_operations = [
                 # YAML configuration files in config/ directory
                 ("agents.yaml.j2", config_dir / "agents.yaml", {"agents": agents}),
                 (
                     "tasks.yaml.j2",
                     config_dir / "tasks.yaml",
                     {"tasks": tasks, "agents": agents},
-                ),
-                # Main crew.py file (overwrites the scaffold version)
-                (
-                    "crew.py.j2",
-                    module_path / "crew.py",
-                    {
-                        "agents": agents,
-                        "tasks": tasks,
-                        "tools": tools["selected_tools"],
-                        "project_name": project_name,
-                    },
                 ),
                 # Custom tools (if any) - placed in tools/ directory
                 (
@@ -341,7 +331,8 @@ class ProjectScaffolder:
                 ),
             ]
 
-            for template_name, output_path, template_vars in file_operations:
+            # Process template-based files
+            for template_name, output_path, template_vars in template_operations:
                 try:
                     # output_path is now the full path, not relative to module_path
                     logger.debug(f"Populating {output_path}")
@@ -378,6 +369,47 @@ class ProjectScaffolder:
                     raise FileSystemError(
                         f"Failed to populate {output_path.name}", output_path, e
                     )
+
+            # Handle crew.py file using LLM generation instead of template
+            crew_py_path = module_path / "crew.py"
+            try:
+                logger.debug(f"Generating crew.py using LLM at {crew_py_path}")
+
+                # Backup existing crew.py if it exists
+                backup_path = None
+                if crew_py_path.exists():
+                    backup_path = crew_py_path.with_suffix(".py.bak")
+                    shutil.copy2(crew_py_path, backup_path)
+                    logger.debug(f"Created backup: {backup_path}")
+
+                # Generate crew.py content using LLM
+                crew_content = self.generation_engine.generate_crew_py(
+                    project_name=project_name,
+                    agents=agents,
+                    tasks=tasks,
+                    tools=tools,
+                    streaming_callbacks=None,  # Don't stream for file generation
+                )
+
+                # Write the generated content to file
+                with open(crew_py_path, "w", encoding="utf-8") as f:
+                    f.write(crew_content)
+
+                # Remove backup on success
+                if backup_path and backup_path.exists():
+                    backup_path.unlink()
+
+                logger.debug("Successfully generated crew.py using LLM")
+
+            except Exception as e:
+                # Restore backup if it exists
+                if backup_path and backup_path.exists():
+                    shutil.move(str(backup_path), str(crew_py_path))
+                    logger.warning("Restored backup for crew.py")
+
+                raise FileSystemError(
+                    f"Failed to generate crew.py using LLM", crew_py_path, e
+                )
 
             logger.info("Successfully populated all project files")
 

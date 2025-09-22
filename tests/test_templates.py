@@ -121,53 +121,6 @@ class TestTemplateRendering:
         assert "Find relevant content" in result
         assert "FileReadTool" in result
 
-    def test_render_crew_py(self):
-        """Test rendering of crew.py template."""
-        engine = TemplateEngine()
-
-        agents = [
-            {"role": "research-agent", "goal": "Research", "backstory": "Researcher"},
-            {"role": "writer agent", "goal": "Write", "backstory": "Writer"},
-        ]
-
-        tasks = [
-            {
-                "description": "Research the topic thoroughly",
-                "expected_output": "Research report",
-                "agent_role": "research-agent",
-            },
-            {
-                "description": "Write comprehensive article based on research",
-                "expected_output": "Article",
-                "agent_role": "writer agent",
-            },
-        ]
-
-        result = engine.render_template(
-            "crew.py.j2",
-            project_name="my-awesome-project",
-            agents=agents,
-            tasks=tasks,
-            tools=[],
-        )
-
-        # Check class name conversion
-        assert "class MyAwesomeProject():" in result
-
-        # Check agent method names
-        assert "def research_agent(self)" in result
-        assert "def writer_agent(self)" in result
-
-        # Check task method names
-        assert (
-            "def research_the_topic_thoroughly_task(self)" in result
-        )  # not truncated because it fits in 30 chars
-        assert "def write_comprehensive_article_ba_task(self)" in result
-
-        # Check config references match
-        assert "self.agents_config['research_agent']" in result
-        assert "self.tasks_config['research_the_topic_thoroughly_task']" in result
-
 
 class TestTemplateEngine:
     """Test core TemplateEngine functionality."""
@@ -180,7 +133,7 @@ class TestTemplateEngine:
         template = engine.get_template("agents.yaml.j2")
         assert template is not None
 
-        template = engine.get_template("crew.py.j2")
+        template = engine.get_template("tasks.yaml.j2")
         assert template is not None
 
     def test_template_not_found(self):
@@ -221,7 +174,7 @@ class TestTemplateEngine:
         # Valid templates
         assert engine.validate_template("agents.yaml.j2") is True
         assert engine.validate_template("tasks.yaml.j2") is True
-        assert engine.validate_template("crew.py.j2") is True
+        assert engine.validate_template("tools.py.j2") is True
 
         # Invalid template
         assert engine.validate_template("does_not_exist.j2") is False
@@ -275,31 +228,23 @@ class TestTemplateIntegration:
                 "tasks.yaml.j2", tasks_path, tasks=tasks, agents=agents
             )
 
-            # Generate crew.py
-            crew_path = base_path / "crew.py"
+            # Generate custom tools
+            tools_path = base_path / "tools" / "custom_tool.py"
             engine.populate_template(
-                "crew.py.j2",
-                crew_path,
-                project_name="market-analysis-crew",
-                agents=agents,
-                tasks=tasks,
+                "tools.py.j2",
+                tools_path,
                 tools=["WebsiteSearchTool", "FileWriterTool"],
             )
 
             # Verify all files created
             assert agents_path.exists()
             assert tasks_path.exists()
-            assert crew_path.exists()
+            assert tools_path.exists()
 
             # Verify content structure
             agents_content = agents_path.read_text()
             assert "market_research_analyst:" in agents_content
             assert "content_writer:" in agents_content
 
-            crew_content = crew_path.read_text()
-            assert "class MarketAnalysisCrew():" in crew_content
-            assert "def market_research_analyst(self)" in crew_content
-            assert (
-                "from crewai_tools import WebsiteSearchTool, FileWriterTool"
-                in crew_content
-            )
+            tools_content = tools_path.read_text()
+            assert "WebsiteSearchTool" in tools_content

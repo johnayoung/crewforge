@@ -1,0 +1,32 @@
+Generate a complete crew.py file for the CrewAI project: {{ project_name }}
+
+Project Details:
+- Project Name: {{ project_name }}
+- Number of Agents: {{ agents|length }}
+- Number of Tasks: {{ tasks|length }}
+- Tools Available: {{ tool_names|join(', ') if tool_names else 'None' }}
+
+Agent Configurations:
+{% for agent in agent_summaries -%}
+- {{ agent.role }}: {{ agent.goal }}
+{% endfor %}
+
+Task Configurations:
+{% for task in task_summaries -%}
+- {{ task.description[:80] + '...' if task.description|length > 80 else task.description }}
+{% endfor %}
+
+Tools to Import (if any):
+{% for tool in tool_names -%}
+- {{ tool }}
+{% endfor %}
+
+Generate a complete, properly formatted crew.py file that:
+1. Defines a class named after the project (in PascalCase)
+2. Creates agent methods that load from YAML config files  
+3. Creates task methods that load from YAML config files
+4. Includes proper tool imports and assignments
+5. Has a crew method that assembles everything
+6. Is free of formatting issues and follows Python best practices
+
+Return ONLY the Python code, no explanations or markdown formatting.

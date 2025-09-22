@@ -575,6 +575,312 @@ class GenerationEngine:
                 f"Failed to select tools: {str(e)}", original_exception=e
             )
 
+    def _research_crewai_patterns(
+        self,
+        streaming_callbacks: Optional[StreamingCallbacks] = None,
+    ) -> str:
+        """Research current CrewAI patterns and best practices.
+
+        This method queries the LLM about current CrewAI API patterns, imports,
+        and best practices to ensure generated code follows the latest standards.
+
+        Args:
+            streaming_callbacks: Optional callbacks for streaming LLM responses
+
+        Returns:
+            Research summary containing current CrewAI patterns
+
+        Raises:
+            GenerationError: If research fails
+        """
+        if self.verbose:
+            click.echo("🔍 Researching current CrewAI patterns and best practices...")
+
+        research_prompt = """You are an expert in the CrewAI framework. Provide a concise summary of the current CrewAI API patterns for generating crew.py files.
+
+Focus on:
+1. Correct import statements (what to import from where)
+2. Proper @CrewBase decorator usage
+3. Agent method signatures and return types
+4. Task method signatures and return types  
+5. Crew method implementation
+6. Configuration loading patterns (agents_config, tasks_config)
+7. Tool integration patterns
+8. Type hints and annotations
+
+Provide ONLY the technical patterns and API information, not explanations. Format as a structured summary."""
+
+        try:
+            # Create default streaming callbacks for verbose mode if none provided
+            use_streaming = streaming_callbacks is not None or self.verbose
+            callbacks_to_use = streaming_callbacks
+
+            if self.verbose and streaming_callbacks is None:
+                # Create verbose streaming callbacks
+                def on_token(token: str) -> None:
+                    click.echo(f"{token}", nl=False)
+
+                def on_completion(response: str) -> None:
+                    click.echo("")  # New line after streaming
+
+                callbacks_to_use = StreamingCallbacks(
+                    on_token=on_token, on_completion=on_completion
+                )
+
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo("📡 Researching CrewAI patterns...")
+                    click.echo("═══ Research Response Start ═══")
+                research_result = self.llm_client.generate_streaming(
+                    system_prompt="You are an expert CrewAI developer with knowledge of the latest API patterns.",
+                    user_prompt=research_prompt,
+                    streaming_callbacks=callbacks_to_use,
+                    use_json_mode=False,
+                    temperature=0.1,
+                )
+                if self.verbose:
+                    click.echo("═══ Research Response End ═══")
+            else:
+                if self.verbose:
+                    click.echo("📡 Researching CrewAI patterns...")
+                research_result = self.llm_client.generate(
+                    system_prompt="You are an expert CrewAI developer with knowledge of the latest API patterns.",
+                    user_prompt=research_prompt,
+                    use_json_mode=False,
+                    temperature=0.1,
+                )
+
+            if self.verbose:
+                click.echo("✅ CrewAI research complete")
+
+            # Ensure we return a string
+            if isinstance(research_result, str):
+                return research_result
+            else:
+                # If somehow we got a dict, convert to string
+                return str(research_result)
+
+        except Exception as e:
+            if self.verbose:
+                click.echo(f"⚠️  Research failed, using fallback patterns: {str(e)}")
+
+            # Fallback patterns if research fails
+            return """
+Current CrewAI Patterns:
+
+IMPORTS:
+from crewai import Agent, Crew, Process, Task
+from crewai.project import CrewBase, agent, crew, task
+from crewai.agents.agent_builder.base_agent import BaseAgent
+from typing import List
+
+CLASS STRUCTURE:
+@CrewBase
+class ProjectName():
+    agents: List[BaseAgent]
+    tasks: List[Task]
+
+AGENT METHODS:
+@agent
+def agent_name(self) -> Agent:
+    return Agent(
+        config=self.agents_config['agent_name'],
+        verbose=True
+    )
+
+TASK METHODS:
+@task
+def task_name(self) -> Task:
+    return Task(
+        config=self.tasks_config['task_name']
+    )
+
+CREW METHOD:
+@crew
+def crew(self) -> Crew:
+    return Crew(
+        agents=self.agents,
+        tasks=self.tasks,
+        process=Process.sequential,
+        verbose=True,
+    )
+"""
+
+    def generate_crew_py(
+        self,
+        project_name: str,
+        agents: List[AgentConfig],
+        tasks: List[TaskConfig],
+        tools: Dict[str, Any],
+        streaming_callbacks: Optional[StreamingCallbacks] = None,
+    ) -> str:
+        """Generate crew.py file content using LLM instead of Jinja2 template.
+
+        Creates a complete, well-formatted crew.py file that follows CrewAI best practices
+        and is properly formatted without the template malformation issues.
+
+        Args:
+            project_name: Name of the project for class naming
+            agents: List of agent configurations
+            tasks: List of task configurations
+            tools: Dictionary containing selected tools information
+            streaming_callbacks: Optional callbacks for streaming LLM responses
+
+        Returns:
+            Complete crew.py file content as a string
+
+        Raises:
+            GenerationError: If crew.py generation fails
+        """
+        if self.verbose:
+            click.echo("📄 Generating crew.py file content...")
+
+        start_time = time.time()
+
+        # Step 1: Research current CrewAI patterns and best practices
+        research_summary = self._research_crewai_patterns(streaming_callbacks)
+
+        # Prepare agent summaries for the prompt
+        agent_summaries = []
+        for agent in agents:
+            summary = {
+                "role": agent.role,
+                "goal": agent.goal,
+                "backstory": (
+                    agent.backstory[:100] + "..."
+                    if len(agent.backstory) > 100
+                    else agent.backstory
+                ),
+                "tools": agent.tools or [],
+            }
+            agent_summaries.append(summary)
+
+        # Prepare task summaries for the prompt
+        task_summaries = []
+        for task in tasks:
+            summary = {
+                "description": (
+                    task.description[:100] + "..."
+                    if len(task.description) > 100
+                    else task.description
+                ),
+                "expected_output": (
+                    task.expected_output[:100] + "..."
+                    if len(task.expected_output) > 100
+                    else task.expected_output
+                ),
+                "agent": task.agent,
+                "tools": task.tools or [],
+                "output_file": getattr(task, "output_file", None),
+            }
+            task_summaries.append(summary)
+
+        selected_tools = tools.get("selected_tools", [])
+        tool_names = [tool.get("name", "") for tool in selected_tools]
+
+        if self.verbose:
+            click.echo(f"   📝 Creating crew.py for project: {project_name}")
+            click.echo(f"   🤖 Including {len(agents)} agents and {len(tasks)} tasks")
+            click.echo(
+                f"   🔧 Including {len(tool_names)} tools: {', '.join(tool_names[:3])}"
+            )
+
+        system_prompt = self.template_engine.render_template(
+            "prompts/generate_crew_py_system.j2", research_summary=research_summary
+        )
+
+        user_prompt = self.template_engine.render_template(
+            "prompts/generate_crew_py_user.j2",
+            project_name=project_name,
+            agents=agents,
+            tasks=tasks,
+            agent_summaries=agent_summaries,
+            task_summaries=task_summaries,
+            tool_names=tool_names,
+        )
+
+        # Create default streaming callbacks for verbose mode if none provided
+        use_streaming = streaming_callbacks is not None or self.verbose
+        callbacks_to_use = streaming_callbacks
+
+        if self.verbose and streaming_callbacks is None:
+            # Create verbose streaming callbacks with clear delimiters
+            def on_token(token: str) -> None:
+                click.echo(f"{token}", nl=False)
+
+            def on_completion(response: str) -> None:
+                click.echo("")  # New line after streaming
+
+            callbacks_to_use = StreamingCallbacks(
+                on_token=on_token, on_completion=on_completion
+            )
+
+        try:
+            if use_streaming and callbacks_to_use:
+                if self.verbose:
+                    click.echo(
+                        "📡 Sending crew.py generation request with streaming..."
+                    )
+                    click.echo("═══ LLM Response Start ═══")
+                result = self.llm_client.generate_streaming(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    streaming_callbacks=callbacks_to_use,
+                    use_json_mode=False,  # We want raw Python code
+                    temperature=0.1,
+                )
+                if self.verbose:
+                    click.echo("═══ LLM Response End ═══")
+            else:
+                if self.verbose:
+                    click.echo("📡 Sending crew.py generation request...")
+                result = self.llm_client.generate(
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    use_json_mode=False,  # We want raw Python code
+                    temperature=0.1,
+                )
+
+            if not isinstance(result, str):
+                raise GenerationError(
+                    f"Expected string response for crew.py content, got {type(result)}"
+                )
+
+            # Basic validation of the generated code
+            if "class" not in result or "@CrewBase" not in result:
+                raise GenerationError(
+                    "Generated crew.py content is missing required class structure"
+                )
+
+            # Clean up any markdown formatting that might have leaked through
+            if result.startswith("```python"):
+                result = result.split("```python")[1]
+            if result.endswith("```"):
+                result = result.rsplit("```", 1)[0]
+
+            result = result.strip()
+
+            duration = time.time() - start_time
+
+            if self.verbose:
+                click.echo(f"✅ Crew.py generation complete in {duration:.2f}s")
+                lines = result.count("\n") + 1
+                click.echo(f"   📄 Generated {lines} lines of Python code")
+
+            return result
+
+        except Exception as e:
+            duration = time.time() - start_time
+            if self.verbose:
+                click.echo(
+                    f"❌ Crew.py generation failed after {duration:.2f}s: {str(e)}"
+                )
+            if isinstance(e, GenerationError):
+                raise
+            raise GenerationError(
+                f"Failed to generate crew.py content: {str(e)}", original_exception=e
+            )
+
     def _validate_agent_task_alignment(
         self, agents: List[AgentConfig], tasks: List[TaskConfig]
     ) -> Tuple[bool, List[str]]:
