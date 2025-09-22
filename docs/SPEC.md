@@ -66,11 +66,13 @@
 
 ### CLI Interface
 **Purpose:** Primary user interaction point for the MVP
-**Inputs:** Natural language prompts, command flags
+**Inputs:** Natural language prompts, command flags (--name, --output)
 **Outputs:** Status messages, generated project paths
 **Dependencies:** Click framework
 **Key Responsibilities:**
 - Accept and validate user prompts
+- Handle optional project name specification via --name flag
+- Support custom output directory specification via --output flag
 - Orchestrate generation pipeline
 - Provide progress feedback to user
 - Handle basic error scenarios
@@ -180,6 +182,12 @@ crewforge generate "Create a content research crew that finds and summarizes art
 
 # With project name  
 crewforge generate --name research-crew "Build agents that research competitors"
+
+# With custom output directory
+crewforge generate --output ./projects/research-crew "Build agents that research competitors"
+
+# With both name and output directory
+crewforge generate --name research-crew --output ./my-projects "Build agents that research competitors"
 ```
 
 **Core Integration Flow:**

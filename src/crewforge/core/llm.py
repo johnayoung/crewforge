@@ -89,7 +89,7 @@ class RetryConfig(BaseModel):
 class LLMClient:
     """Wrapper around LiteLLM for multi-provider LLM access with enhanced features."""
 
-    def __init__(self, model: str = "gpt-4", retry_config: RetryConfig | None = None):
+    def __init__(self, model: str = "gpt-4o", retry_config: RetryConfig | None = None):
         """Initialize LLM client.
 
         Args:
@@ -127,8 +127,6 @@ class LLMClient:
         # Set up model routing and API key detection
         # LiteLLM automatically detects API keys from environment variables
         litellm.drop_params = True  # Drop unsupported parameters
-        # Enable debug mode for troubleshooting
-        # litellm._turn_on_debug()  # Uncomment for debugging
 
     def _render_prompt_template(self, template_name: str, **context: Any) -> str:
         """Load and render a prompt template with the given context.

@@ -77,10 +77,56 @@ def create_streaming_callbacks():
     return StreamingCallbacks(on_token=on_token, on_completion=on_completion)
 
 
+def validate_and_prepare_output_dir(output: Optional[Path]) -> Path:
+    """Validate and prepare the output directory for project generation.
+
+    Args:
+        output: The output directory path, or None to use current directory
+
+    Returns:
+        Path: The validated and prepared output directory
+
+    Raises:
+        click.ClickException: If the directory cannot be created or accessed
+    """
+    # Use current directory if no output specified
+    if output is None:
+        output_dir = Path.cwd()
+    else:
+        output_dir = output
+
+    try:
+        # Create directory if it doesn't exist
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True, exist_ok=True)
+            click.echo(f"📁 Created output directory: {output_dir}")
+
+        # Check if directory is writable
+        if not os.access(output_dir, os.W_OK):
+            raise click.ClickException(
+                f"Output directory is not writable: {output_dir}\n"
+                "Please check permissions or choose a different directory."
+            )
+
+        # Resolve to absolute path for consistency
+        return output_dir.resolve()
+
+    except OSError as e:
+        raise click.ClickException(
+            f"Failed to create or access output directory '{output_dir}': {e}\n"
+            "Please check permissions or choose a different directory."
+        )
+
+
 @cli.command()
 @click.argument("prompt")
 @click.option("--name", help="Name for the generated project")
-def generate(prompt: str, name: Optional[str] = None):
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path, file_okay=False, dir_okay=True, resolve_path=True),
+    help="Output directory for the generated project (default: current directory)",
+)
+def generate(prompt: str, name: Optional[str] = None, output: Optional[Path] = None):
     """Generate a CrewAI project from a natural language prompt.
 
     PROMPT: Natural language description of the crew you want to create.
@@ -88,8 +134,21 @@ def generate(prompt: str, name: Optional[str] = None):
     Examples:
       crewforge generate "Create a content research crew that finds and analyzes articles"
       crewforge generate --name my-crew "Build agents for customer service automation"
+      crewforge generate --output ./projects "Create a content research crew"
+      crewforge generate --name my-crew --output /tmp/crews "Build agents for automation"
     """
     try:
+        # Step 0: Validate and prepare output directory
+        click.echo("📁 Validating output directory...")
+        try:
+            output_dir = validate_and_prepare_output_dir(output)
+            click.echo(f"✅ Output directory ready: {output_dir}")
+        except click.ClickException:
+            # Re-raise Click exceptions as-is
+            raise
+        except Exception as e:
+            raise click.ClickException(f"Failed to prepare output directory: {e}")
+
         # Create simple project name from input or use default
         project_name = name or "generated-crew"
 
@@ -133,9 +192,6 @@ def generate(prompt: str, name: Optional[str] = None):
             # Create streaming callbacks for real-time LLM response display
             streaming_callbacks = create_streaming_callbacks()
 
-            # Generate the complete project using scaffolding
-            current_dir = Path.cwd()
-
             click.echo(
                 "🔄 Generation pipeline started with real-time progress tracking..."
             )
@@ -143,7 +199,7 @@ def generate(prompt: str, name: Optional[str] = None):
 
             project_path = scaffolder.generate_project(
                 generation_request,
-                current_dir,
+                output_dir,
                 streaming_callbacks=streaming_callbacks,
             )
 

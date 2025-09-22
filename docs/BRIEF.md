@@ -29,6 +29,7 @@ A CLI tool that generates functional CrewAI MVPs from natural language prompts, 
 - **[MVP]** Ensure generated crews perform specified business functions
 - **[MVP]** Save configured agents, tasks, and tools to refine process over time
 - **[MVP]** Use Jinja2 templates for LLM prompt management to enable maintainable and customizable prompt engineering
+- **[MVP]** Support custom output directory specification via --output option for generated projects
 - **[POST-MVP]** Provide interactive clarification for ambiguous prompts
 - **[POST-MVP]** Suggest optimal configurations based on detected project patterns
 - **[POST-MVP]** Handle edge cases through guided specification prompts

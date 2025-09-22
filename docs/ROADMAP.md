@@ -22,6 +22,7 @@
 
 - [x] **Commit 14**: Jinja2 Template-Based Prompt System ✅ [2025-09-22 16:15]
 - [x] **Commit 15**: Refactor Generator Prompts to Jinja2 Templates ✅ [2025-09-22 16:45]
+- [x] **Commit 16**: CLI Output Directory Option ✅ [2025-09-22 17:30]
 
 ## Implementation Sequence
 
@@ -436,3 +437,35 @@
 - Preserved exact prompt content while making it maintainable through external template files
 - Maintained all existing method signatures for seamless integration with existing codebase
 - Added error-resilient callback handling to prevent interruption of generation pipeline
+
+## Additional Features
+
+### Commit 16: CLI Output Directory Option
+
+**Goal**: Add --output option to CLI for specifying custom output directory for generated CrewAI projects.
+
+**Requirements**:
+1. Update `src/crewforge/cli/main.py` with:
+   - Add `--output` Click option with path validation
+   - Support absolute and relative path specifications
+   - Default to current working directory if not specified
+   - Validate directory exists or can be created
+2. Update `src/crewforge/core/scaffolding.py` with:
+   - Accept output_dir parameter in ProjectScaffolder methods
+   - Handle directory creation and permission validation
+   - Update project path resolution for custom directories
+3. Add comprehensive validation:
+   - Check directory permissions and write access
+   - Validate directory path format and existence
+   - Handle path resolution edge cases
+   - Provide clear error messages for invalid paths
+
+**Validation**: `uv run crewforge generate --output ./custom-projects "Test crew"` → Creates project in specified directory; `uv run crewforge generate --output /tmp/crews --name test "Test crew"` → Creates project at absolute path with proper validation ✅ [2025-09-22 17:30]
+
+**Implementation Details**:
+- Added Click `--output` option with `click.Path` type validation for directory paths with resolve_path=True for consistent absolute paths
+- Created `validate_and_prepare_output_dir()` utility function with automatic directory creation using `mkdir(parents=True)` for nested paths
+- Enhanced CLI generate command with output directory validation step and comprehensive error handling for permission and access issues
+- Integrated output directory validation into generation pipeline with real-time feedback and status reporting
+- Updated CLI examples and documentation to demonstrate relative paths, absolute paths, and combined usage with --name option
+- Maintained backward compatibility with current working directory as default when --output is not specified
