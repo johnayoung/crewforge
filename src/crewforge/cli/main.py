@@ -126,7 +126,17 @@ def validate_and_prepare_output_dir(output: Optional[Path]) -> Path:
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True, resolve_path=True),
     help="Output directory for the generated project (default: current directory)",
 )
-def generate(prompt: str, name: Optional[str] = None, output: Optional[Path] = None):
+@click.option(
+    "--verbose",
+    is_flag=True,
+    help="Enable verbose output showing detailed generation steps and LLM interactions",
+)
+def generate(
+    prompt: str,
+    name: Optional[str] = None,
+    output: Optional[Path] = None,
+    verbose: bool = False,
+):
     """Generate a CrewAI project from a natural language prompt.
 
     PROMPT: Natural language description of the crew you want to create.
@@ -163,7 +173,12 @@ def generate(prompt: str, name: Optional[str] = None, output: Optional[Path] = N
             raise click.ClickException(f"Validation error: {e}")
 
         # Step 2: Create progress tracker and initialize project scaffolder
-        click.echo("🔧 Initializing project scaffolder with progress tracking...")
+        if verbose:
+            click.echo(
+                "🔧 Initializing project scaffolder with progress tracking (verbose mode enabled)..."
+            )
+        else:
+            click.echo("🔧 Initializing project scaffolder with progress tracking...")
         try:
             # Create progress tracker with standard generation steps
             progress_tracker = ProgressTracker(get_standard_generation_steps())
@@ -172,7 +187,12 @@ def generate(prompt: str, name: Optional[str] = None, output: Optional[Path] = N
 
             # Initialize scaffolder with progress tracker
             scaffolder = ProjectScaffolder(progress_tracker=progress_tracker)
-            click.echo("✅ Scaffolder ready with progress tracking")
+            if verbose:
+                click.echo(
+                    "✅ Scaffolder ready with progress tracking (verbose mode: detailed output enabled)"
+                )
+            else:
+                click.echo("✅ Scaffolder ready with progress tracking")
         except Exception as e:
             raise click.ClickException(f"Failed to initialize scaffolder: {e}")
 
@@ -192,15 +212,21 @@ def generate(prompt: str, name: Optional[str] = None, output: Optional[Path] = N
             # Create streaming callbacks for real-time LLM response display
             streaming_callbacks = create_streaming_callbacks()
 
-            click.echo(
-                "🔄 Generation pipeline started with real-time progress tracking..."
-            )
+            if verbose:
+                click.echo(
+                    "🔄 Generation pipeline started with real-time progress tracking (verbose mode: detailed output enabled)..."
+                )
+            else:
+                click.echo(
+                    "🔄 Generation pipeline started with real-time progress tracking..."
+                )
             click.echo("")
 
             project_path = scaffolder.generate_project(
                 generation_request,
                 output_dir,
                 streaming_callbacks=streaming_callbacks,
+                verbose=verbose,
             )
 
             click.echo("")

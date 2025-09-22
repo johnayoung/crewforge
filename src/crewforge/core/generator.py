@@ -31,15 +31,17 @@ class GenerationEngine:
     5. Validates compatibility and quality of generated configurations
     """
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(self, llm_client: Optional[LLMClient] = None, verbose: bool = False):
         """Initialize GenerationEngine.
 
         Args:
             llm_client: LLMClient instance for LLM calls. If None, creates default client.
+            verbose: If True, enables verbose output for detailed generation steps.
         """
         if llm_client is None:
             llm_client = LLMClient()
         self.llm_client = llm_client
+        self.verbose = verbose
 
         # Initialize template engine for prompt rendering
         self.template_engine = TemplateEngine()

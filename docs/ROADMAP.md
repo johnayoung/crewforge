@@ -24,6 +24,15 @@
 - [x] **Commit 15**: Refactor Generator Prompts to Jinja2 Templates ✅ [2025-09-22 16:45]
 - [x] **Commit 16**: CLI Output Directory Option ✅ [2025-09-22 17:30]
 
+## Post-MVP Enhancement: Verbose Mode for LLM Observability
+
+## Post-MVP Enhancement: Verbose Mode for LLM Observability
+
+- [x] **Commit 17**: Add Verbose Mode Foundation to CLI ✅ [2025-09-22 18:15]
+- [ ] **Commit 18**: Implement LLM Request/Response Logging in LLMClient  
+- [ ] **Commit 19**: Integrate Verbose Output Throughout Generation Pipeline
+- [ ] **Commit 20**: Add Formatting and Summary Statistics
+
 ## Implementation Sequence
 
 ### Commit 1: Project Foundation & Package Configuration
@@ -438,8 +447,6 @@
 - Maintained all existing method signatures for seamless integration with existing codebase
 - Added error-resilient callback handling to prevent interruption of generation pipeline
 
-## Additional Features
-
 ### Commit 16: CLI Output Directory Option
 
 **Goal**: Add --output option to CLI for specifying custom output directory for generated CrewAI projects.
@@ -462,10 +469,99 @@
 
 **Validation**: `uv run crewforge generate --output ./custom-projects "Test crew"` → Creates project in specified directory; `uv run crewforge generate --output /tmp/crews --name test "Test crew"` → Creates project at absolute path with proper validation ✅ [2025-09-22 17:30]
 
-**Implementation Details**:
-- Added Click `--output` option with `click.Path` type validation for directory paths with resolve_path=True for consistent absolute paths
-- Created `validate_and_prepare_output_dir()` utility function with automatic directory creation using `mkdir(parents=True)` for nested paths
-- Enhanced CLI generate command with output directory validation step and comprehensive error handling for permission and access issues
-- Integrated output directory validation into generation pipeline with real-time feedback and status reporting
-- Updated CLI examples and documentation to demonstrate relative paths, absolute paths, and combined usage with --name option
-- Maintained backward compatibility with current working directory as default when --output is not specified
+---
+
+### Commit 17: Add Verbose Mode Foundation to CLI
+
+**Goal**: Add --verbose flag to CLI and threading through to core components.
+
+**Requirements**:
+1. Update `src/crewforge/cli/main.py` with:
+   - Add `--verbose` flag to generate command
+   - Pass verbose flag through to ProjectScaffolder
+   - Add basic verbose output for major steps (not LLM calls yet)
+2. Update `src/crewforge/core/scaffolding.py` with:
+   - Accept `verbose` parameter in `generate_project()` method
+   - Pass verbose flag to GenerationEngine
+3. Update `src/crewforge/core/generator.py` with:
+   - Accept `verbose` parameter in `__init__`
+   - Store as instance variable for later use
+
+**Validation**: `crewforge generate --verbose "test"` shows additional step output (but not LLM details yet)
+
+---
+
+### Commit 18: Implement LLM Request/Response Logging in LLMClient
+
+**Goal**: Add verbose logging capability to LLMClient for prompt/completion visibility.
+
+**Requirements**:
+1. Update `src/crewforge/core/llm.py` with:
+   - Add `verbose` parameter to LLMClient constructor
+   - Create `_log_verbose()` helper method for formatted output
+   - In `generate()` and `generate_streaming()`, log:
+     - Model being used
+     - System prompt (truncated if too long)
+     - User prompt (truncated if too long)
+     - Response (formatted based on JSON or text)
+     - Token count (if available from response)
+     - Duration of API call
+   - Handle both success and error cases in verbose output
+2. Add formatting utilities:
+   - Truncate long prompts/responses intelligently (show first/last N chars)
+   - Format JSON responses with indentation
+   - Use color coding if Click's styling is available
+
+**Validation**: When verbose=True, LLMClient outputs formatted prompt/response pairs to console
+
+---
+
+### Commit 19: Integrate Verbose Output Throughout Generation Pipeline
+
+**Goal**: Connect verbose mode through the entire generation flow with meaningful output.
+
+**Requirements**:
+1. Update `src/crewforge/core/generator.py` with:
+   - Pass verbose flag to LLMClient initialization
+   - Add step-level verbose output in each method:
+     - `analyze_prompt()`: "Analyzing prompt for requirements..."
+     - `generate_agents()`: "Generating agent configurations..."
+     - `generate_tasks()`: "Creating task definitions..."
+     - `select_tools()`: "Selecting appropriate tools..."
+   - Include intermediate results summary (e.g., "Found 3 required roles")
+2. Update streaming callbacks integration:
+   - In verbose mode, show streaming tokens even without explicit streaming callbacks
+   - Add clear delimiters between streaming output and structured logs
+3. Add timing information:
+   - Track duration of each generation step
+   - Display in verbose output
+
+**Validation**: `crewforge generate --verbose "test"` shows full LLM interaction details for each step
+
+---
+
+### Commit 20: Add Formatting and Summary Statistics  
+
+**Goal**: Polish verbose output with better formatting, colors, and helpful summary.
+
+**Requirements**:
+1. Create `src/crewforge/core/verbose.py` with:
+   - `VerboseLogger` class for consistent formatting
+   - Methods for different output types:
+     - `log_step()`: Major step announcements
+     - `log_llm_request()`: Formatted prompt display
+     - `log_llm_response()`: Formatted response display
+     - `log_metrics()`: Token usage, timing, costs
+   - Use Click's echo with colors/styles when available
+   - Handle non-TTY environments gracefully
+2. Add summary statistics:
+   - Total tokens used across all calls
+   - Total API time
+   - Estimated cost (if model pricing is known)
+   - Number of retry attempts
+3. Update all verbose output to use VerboseLogger:
+   - Replace direct print/echo calls
+   - Consistent indentation and formatting
+   - Clear visual separation between steps
+
+**Validation**: Verbose output is well-formatted, readable, with clear sections and helpful summary at the end

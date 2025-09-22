@@ -392,6 +392,7 @@ class ProjectScaffolder:
         request: GenerationRequest,
         output_dir: Path,
         streaming_callbacks: Optional[StreamingCallbacks] = None,
+        verbose: bool = False,
     ) -> Path:
         """Generate a complete CrewAI project from a generation request.
 
@@ -407,6 +408,7 @@ class ProjectScaffolder:
             request: GenerationRequest with prompt and project name
             output_dir: Directory where the project should be created
             streaming_callbacks: Optional callbacks for LLM streaming
+            verbose: If True, enables verbose output for detailed generation steps
 
         Returns:
             Path to the generated project directory
@@ -417,7 +419,17 @@ class ProjectScaffolder:
         project_path = None
 
         try:
+            # If verbose mode is enabled, ensure we have a verbose-capable generation engine
+            if verbose and not getattr(self.generation_engine, "verbose", False):
+                # Create a new generation engine with verbose mode enabled
+                # Use the same LLM client to maintain consistency
+                self.generation_engine = GenerationEngine(
+                    llm_client=self.generation_engine.llm_client, verbose=True
+                )
+
             # Step 1: Create CrewAI project scaffolding FIRST
+            if verbose:
+                logger.info("🏗️  [VERBOSE] Starting CrewAI project scaffolding...")
             self.progress_tracker.start_step("create_scaffold")
 
             try:
@@ -426,6 +438,10 @@ class ProjectScaffolder:
                 project_path = self.create_crewai_project(
                     request.project_name, output_dir
                 )
+                if verbose:
+                    logger.info(
+                        f"🏗️  [VERBOSE] Project scaffolding created at: {project_path}"
+                    )
                 self.progress_tracker.complete_step("create_scaffold")
             except Exception as e:
                 self.progress_tracker.fail_step("create_scaffold", str(e))
@@ -435,12 +451,21 @@ class ProjectScaffolder:
                 )
 
             # Step 2: Analyze prompt for crew requirements
+            if verbose:
+                logger.info(
+                    f"🔍 [VERBOSE] Analyzing prompt: '{request.prompt[:100]}{'...' if len(request.prompt) > 100 else ''}'"
+                )
             self.progress_tracker.start_step("analyze_prompt")
 
             try:
                 prompt_analysis = self.generation_engine.analyze_prompt(
                     request.prompt, streaming_callbacks
                 )
+                if verbose:
+                    required_roles = prompt_analysis.get("required_roles", [])
+                    logger.info(
+                        f"🔍 [VERBOSE] Found {len(required_roles)} required roles: {', '.join(required_roles[:3])}{'...' if len(required_roles) > 3 else ''}"
+                    )
                 self.progress_tracker.complete_step("analyze_prompt")
             except Exception as e:
                 self.progress_tracker.fail_step("analyze_prompt", str(e))
@@ -449,12 +474,20 @@ class ProjectScaffolder:
                 )
 
             # Step 3: Generate agent configurations
+            if verbose:
+                logger.info(
+                    "🤖 [VERBOSE] Generating agent configurations based on analysis..."
+                )
             self.progress_tracker.start_step("generate_agents")
 
             try:
                 agents = self.generation_engine.generate_agents(
                     prompt_analysis, streaming_callbacks
                 )
+                if verbose:
+                    logger.info(
+                        f"🤖 [VERBOSE] Generated {len(agents)} agents: {', '.join([agent.role for agent in agents])}"
+                    )
                 self.progress_tracker.complete_step("generate_agents")
             except Exception as e:
                 self.progress_tracker.fail_step("generate_agents", str(e))
@@ -463,12 +496,20 @@ class ProjectScaffolder:
                 )
 
             # Step 4: Generate task definitions
+            if verbose:
+                logger.info(
+                    f"📋 [VERBOSE] Generating task definitions for {len(agents)} agents..."
+                )
             self.progress_tracker.start_step("generate_tasks")
 
             try:
                 tasks = self.generation_engine.generate_tasks(
                     agents, prompt_analysis, streaming_callbacks
                 )
+                if verbose:
+                    logger.info(
+                        f"📋 [VERBOSE] Generated {len(tasks)} tasks with clear expected outputs"
+                    )
                 self.progress_tracker.complete_step("generate_tasks")
             except Exception as e:
                 self.progress_tracker.fail_step("generate_tasks", str(e))
@@ -477,6 +518,11 @@ class ProjectScaffolder:
                 )
 
             # Step 5: Select appropriate tools
+            if verbose:
+                tools_needed = prompt_analysis.get("tools_needed", [])
+                logger.info(
+                    f"🔧 [VERBOSE] Selecting tools for categories: {', '.join(tools_needed) if tools_needed else 'basic tools'}"
+                )
             self.progress_tracker.start_step("select_tools")
 
             try:
@@ -484,6 +530,8 @@ class ProjectScaffolder:
                 tools = self.generation_engine.select_tools(
                     tools_needed, streaming_callbacks
                 )
+                if verbose:
+                    logger.info(f"🔧 [VERBOSE] Selected {len(tools)} tools for project")
                 self.progress_tracker.complete_step("select_tools")
             except Exception as e:
                 self.progress_tracker.fail_step("select_tools", str(e))
@@ -492,12 +540,20 @@ class ProjectScaffolder:
                 )
 
             # Step 6: Populate project files with generated content
+            if verbose:
+                logger.info(
+                    f"📁 [VERBOSE] Populating project files with generated configurations..."
+                )
             self.progress_tracker.start_step("populate_files")
 
             try:
                 self.populate_project_files(
                     project_path, agents, tasks, tools, request.project_name
                 )
+                if verbose:
+                    logger.info(
+                        f"📁 [VERBOSE] Successfully populated all project files in {project_path}"
+                    )
                 self.progress_tracker.complete_step("populate_files")
             except Exception as e:
                 self.progress_tracker.fail_step("populate_files", str(e))
