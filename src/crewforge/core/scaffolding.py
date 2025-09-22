@@ -100,6 +100,7 @@ class ProjectScaffolder:
         self,
         generation_engine: Optional[GenerationEngine] = None,
         template_engine: Optional[TemplateEngine] = None,
+        progress_tracker: Optional[ProgressTracker] = None,
     ):
         """Initialize ProjectScaffolder.
 
@@ -108,14 +109,34 @@ class ProjectScaffolder:
                               If None, creates default instance.
             template_engine: TemplateEngine instance for file population.
                            If None, creates default instance.
+            progress_tracker: ProgressTracker instance for progress tracking.
+                            If None, creates default with basic steps.
         """
         if generation_engine is None:
             generation_engine = GenerationEngine()
         if template_engine is None:
             template_engine = TemplateEngine()
+        if progress_tracker is None:
+            # Create default progress tracker with standard generation steps
+            default_steps = [
+                ProgressStep(
+                    "analyze_prompt", "Analyzing prompt for requirements", 5.0
+                ),
+                ProgressStep(
+                    "generate_agents", "Generating agent configurations", 15.0
+                ),
+                ProgressStep("generate_tasks", "Creating task definitions", 10.0),
+                ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
+                ProgressStep(
+                    "create_scaffold", "Creating CrewAI project structure", 8.0
+                ),
+                ProgressStep("populate_files", "Populating project files", 4.0),
+            ]
+            progress_tracker = ProgressTracker(default_steps)
 
         self.generation_engine = generation_engine
         self.template_engine = template_engine
+        self.progress_tracker = progress_tracker
 
     def create_crewai_project(self, project_name: str, parent_dir: Path) -> Path:
         """Create a new CrewAI project using the CrewAI CLI.
@@ -167,6 +188,12 @@ class ProjectScaffolder:
                 -1,
                 "CrewAI CLI not found. Please install with: pip install crewai",
             )
+        except subprocess.SubprocessError as e:
+            raise CrewAICommandError(
+                ["crewai", "--version"],
+                -1,
+                f"Failed to execute CrewAI command: {str(e)}",
+            )
 
         try:
             logger.info(f"Creating CrewAI project '{project_name}' in {parent_dir}")
@@ -211,6 +238,14 @@ class ProjectScaffolder:
         except subprocess.SubprocessError as e:
             logger.error(f"Subprocess error: {e}")
             raise CrewAICommandError(command, -1, f"Subprocess error: {str(e)}", e)
+
+        except CrewAICommandError as e:
+            # Re-raise CrewAI command errors as ScaffoldingError with specific message
+            logger.error(f"CrewAI project creation failed: {e}")
+            raise ScaffoldingError(
+                f"CrewAI project creation failed: {str(e)}",
+                original_exception=e,
+            )
 
         except Exception as e:
             logger.error(f"Unexpected error creating project: {e}")
@@ -327,7 +362,6 @@ class ProjectScaffolder:
         self,
         request: GenerationRequest,
         output_dir: Path,
-        progress_tracker: Optional[ProgressTracker] = None,
         streaming_callbacks: Optional[StreamingCallbacks] = None,
     ) -> Path:
         """Generate a complete CrewAI project from a generation request.
@@ -343,7 +377,6 @@ class ProjectScaffolder:
         Args:
             request: GenerationRequest with prompt and project name
             output_dir: Directory where the project should be created
-            progress_tracker: Optional progress tracker for step tracking
             streaming_callbacks: Optional callbacks for LLM streaming
 
         Returns:
@@ -354,99 +387,66 @@ class ProjectScaffolder:
         """
         project_path = None
 
-        # Define generation steps if progress tracking is enabled
-        if progress_tracker:
-            steps = [
-                ProgressStep(
-                    "analyze_prompt", "Analyzing prompt for requirements", 5.0
-                ),
-                ProgressStep(
-                    "generate_agents", "Generating agent configurations", 15.0
-                ),
-                ProgressStep("generate_tasks", "Creating task definitions", 10.0),
-                ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
-                ProgressStep(
-                    "create_scaffold", "Creating CrewAI project structure", 8.0
-                ),
-                ProgressStep("populate_files", "Populating project files", 4.0),
-            ]
-
-            # Update progress tracker with our steps
-            progress_tracker.steps = steps
-
         try:
             # Step 1: Analyze prompt for crew requirements
-            if progress_tracker:
-                progress_tracker.start_step("analyze_prompt")
+            self.progress_tracker.start_step("analyze_prompt")
 
             try:
                 prompt_analysis = self.generation_engine.analyze_prompt(
                     request.prompt, streaming_callbacks
                 )
-                if progress_tracker:
-                    progress_tracker.complete_step("analyze_prompt")
+                self.progress_tracker.complete_step("analyze_prompt")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("analyze_prompt", str(e))
+                self.progress_tracker.fail_step("analyze_prompt", str(e))
                 raise ScaffoldingError(
                     f"Failed to analyze prompt: {str(e)}", original_exception=e
                 )
 
             # Step 2: Generate agent configurations
-            if progress_tracker:
-                progress_tracker.start_step("generate_agents")
+            self.progress_tracker.start_step("generate_agents")
 
             try:
                 agents = self.generation_engine.generate_agents(
                     prompt_analysis, streaming_callbacks
                 )
-                if progress_tracker:
-                    progress_tracker.complete_step("generate_agents")
+                self.progress_tracker.complete_step("generate_agents")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("generate_agents", str(e))
+                self.progress_tracker.fail_step("generate_agents", str(e))
                 raise ScaffoldingError(
                     f"Failed to generate agents: {str(e)}", original_exception=e
                 )
 
             # Step 3: Generate task definitions
-            if progress_tracker:
-                progress_tracker.start_step("generate_tasks")
+            self.progress_tracker.start_step("generate_tasks")
 
             try:
                 tasks = self.generation_engine.generate_tasks(
                     agents, prompt_analysis, streaming_callbacks
                 )
-                if progress_tracker:
-                    progress_tracker.complete_step("generate_tasks")
+                self.progress_tracker.complete_step("generate_tasks")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("generate_tasks", str(e))
+                self.progress_tracker.fail_step("generate_tasks", str(e))
                 raise ScaffoldingError(
                     f"Failed to generate tasks: {str(e)}", original_exception=e
                 )
 
             # Step 4: Select appropriate tools
-            if progress_tracker:
-                progress_tracker.start_step("select_tools")
+            self.progress_tracker.start_step("select_tools")
 
             try:
                 tools_needed = prompt_analysis.get("tools_needed", [])
                 tools = self.generation_engine.select_tools(
                     tools_needed, streaming_callbacks
                 )
-                if progress_tracker:
-                    progress_tracker.complete_step("select_tools")
+                self.progress_tracker.complete_step("select_tools")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("select_tools", str(e))
+                self.progress_tracker.fail_step("select_tools", str(e))
                 raise ScaffoldingError(
                     f"Failed to select tools: {str(e)}", original_exception=e
                 )
 
             # Step 5: Create CrewAI project scaffolding
-            if progress_tracker:
-                progress_tracker.start_step("create_scaffold")
+            self.progress_tracker.start_step("create_scaffold")
 
             try:
                 if not request.project_name:
@@ -454,27 +454,22 @@ class ProjectScaffolder:
                 project_path = self.create_crewai_project(
                     request.project_name, output_dir
                 )
-                if progress_tracker:
-                    progress_tracker.complete_step("create_scaffold")
+                self.progress_tracker.complete_step("create_scaffold")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("create_scaffold", str(e))
+                self.progress_tracker.fail_step("create_scaffold", str(e))
                 raise ScaffoldingError(
                     f"Failed to create project structure: {str(e)}",
                     original_exception=e,
                 )
 
             # Step 6: Populate project files with generated content
-            if progress_tracker:
-                progress_tracker.start_step("populate_files")
+            self.progress_tracker.start_step("populate_files")
 
             try:
                 self.populate_project_files(project_path, agents, tasks, tools)
-                if progress_tracker:
-                    progress_tracker.complete_step("populate_files")
+                self.progress_tracker.complete_step("populate_files")
             except Exception as e:
-                if progress_tracker:
-                    progress_tracker.fail_step("populate_files", str(e))
+                self.progress_tracker.fail_step("populate_files", str(e))
                 raise ScaffoldingError(
                     f"Failed to populate project files: {str(e)}", original_exception=e
                 )

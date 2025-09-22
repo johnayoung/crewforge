@@ -39,6 +39,13 @@ from crewforge.core.scaffolding import (
 class TestLLMErrorHandling:
     """Test LLM error handling and retry logic."""
 
+    @pytest.fixture
+    def temp_dir(self):
+        """Create a temporary directory for testing."""
+        temp_path = Path(tempfile.mkdtemp())
+        yield temp_path
+        shutil.rmtree(temp_path, ignore_errors=True)
+
     def test_retry_config_validation(self):
         """Test retry configuration validation."""
         # Valid config
@@ -145,7 +152,14 @@ class TestLLMErrorHandling:
 class TestScaffoldingErrorHandling:
     """Test scaffolding error handling."""
 
-    def test_crewai_command_not_found(self):
+    @pytest.fixture
+    def temp_dir(self):
+        """Create a temporary directory for testing."""
+        temp_path = Path(tempfile.mkdtemp())
+        yield temp_path
+        shutil.rmtree(temp_path, ignore_errors=True)
+
+    def test_crewai_command_not_found(self, temp_dir):
         """Test handling when CrewAI CLI is not installed."""
         scaffolder = ProjectScaffolder()
 
@@ -153,7 +167,7 @@ class TestScaffoldingErrorHandling:
             mock_run.side_effect = FileNotFoundError("crewai: command not found")
 
             with pytest.raises(CrewAICommandError) as exc_info:
-                scaffolder.create_crewai_project("test", Path("/tmp"))
+                scaffolder.create_crewai_project("test", temp_dir)
 
             assert "not found" in str(exc_info.value).lower()
 

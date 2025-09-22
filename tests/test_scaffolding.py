@@ -7,7 +7,13 @@ import pytest
 import tempfile
 import shutil
 
-from crewforge.core.scaffolding import ProjectScaffolder, ScaffoldingError
+from crewforge.core.scaffolding import (
+    ProjectScaffolder,
+    ScaffoldingError,
+    CrewAICommandError,
+    ProjectStructureError,
+    FileSystemError,
+)
 from crewforge.models import AgentConfig, TaskConfig, GenerationRequest
 
 
@@ -112,20 +118,35 @@ class TestProjectScaffolder:
     @patch("subprocess.run")
     def test_create_crewai_project_success(self, mock_run, scaffolder, temp_dir):
         """Test successful CrewAI project creation."""
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
         project_path = temp_dir / "test-crew"
 
-        # Mock the directory creation that would happen with real CrewAI command
-        project_path.mkdir()
+        # Mock subprocess to simulate successful CrewAI command
+        def mock_subprocess_side_effect(*args, **kwargs):
+            # First call is --version check
+            if args[0] == ["crewai", "--version"]:
+                return Mock(returncode=0, stdout="CrewAI 0.1.0", stderr="")
+            # Second call is create command - simulate CrewAI creating the directory
+            elif args[0] == ["crewai", "create", "crew", "test-crew"]:
+                if not project_path.exists():
+                    project_path.mkdir()
+                return Mock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = mock_subprocess_side_effect
 
         result = scaffolder.create_crewai_project("test-crew", temp_dir)
 
         assert result == project_path
-        mock_run.assert_called_once_with(
+        # Check that both calls were made
+        assert mock_run.call_count == 2
+        mock_run.assert_any_call(
+            ["crewai", "--version"], capture_output=True, text=True, timeout=10
+        )
+        mock_run.assert_any_call(
             ["crewai", "create", "crew", "test-crew"],
             cwd=temp_dir,
             capture_output=True,
             text=True,
+            timeout=120,
             check=False,
         )
 
@@ -134,9 +155,18 @@ class TestProjectScaffolder:
         self, mock_run, scaffolder, temp_dir
     ):
         """Test CrewAI project creation command failure."""
-        mock_run.return_value = Mock(
-            returncode=1, stdout="", stderr="Error: CrewAI command failed"
-        )
+
+        def mock_subprocess_side_effect(*args, **kwargs):
+            # First call is --version check (should succeed)
+            if args[0] == ["crewai", "--version"]:
+                return Mock(returncode=0, stdout="CrewAI 0.1.0", stderr="")
+            # Second call is create command (should fail)
+            elif args[0] == ["crewai", "create", "crew", "test-crew"]:
+                return Mock(
+                    returncode=1, stdout="", stderr="Error: CrewAI command failed"
+                )
+
+        mock_run.side_effect = mock_subprocess_side_effect
 
         with pytest.raises(ScaffoldingError, match="CrewAI project creation failed"):
             scaffolder.create_crewai_project("test-crew", temp_dir)
@@ -148,7 +178,9 @@ class TestProjectScaffolder:
         """Test CrewAI project creation with subprocess exception."""
         mock_run.side_effect = subprocess.SubprocessError("Command not found")
 
-        with pytest.raises(ScaffoldingError, match="Failed to execute CrewAI command"):
+        with pytest.raises(
+            CrewAICommandError, match="Failed to execute CrewAI command"
+        ):
             scaffolder.create_crewai_project("test-crew", temp_dir)
 
     def test_populate_project_files_success(self, scaffolder, temp_dir):
@@ -219,7 +251,8 @@ class TestProjectScaffolder:
         project_path.mkdir()
 
         with pytest.raises(
-            ScaffoldingError, match="CrewAI project structure is invalid"
+            ProjectStructureError,
+            match="Invalid CrewAI project structure: missing src directory",
         ):
             scaffolder.populate_project_files(project_path, [], [], {})
 
@@ -234,8 +267,11 @@ class TestProjectScaffolder:
             "Template error"
         )
 
-        with pytest.raises(ScaffoldingError, match="Failed to populate project files"):
-            scaffolder.populate_project_files(project_path, [], [], {})
+        # Provide proper tools structure to get past the KeyError
+        tools = {"selected_tools": []}
+
+        with pytest.raises(FileSystemError, match="Failed to populate agents.py"):
+            scaffolder.populate_project_files(project_path, [], [], tools)
 
     def test_generate_project_success(self, scaffolder, sample_request, temp_dir):
         """Test complete project generation success."""
@@ -253,7 +289,7 @@ class TestProjectScaffolder:
 
             # Verify the generation pipeline was executed
             scaffolder.generation_engine.analyze_prompt.assert_called_once_with(
-                sample_request.prompt
+                sample_request.prompt, None
             )
             scaffolder.generation_engine.generate_agents.assert_called_once()
             scaffolder.generation_engine.generate_tasks.assert_called_once()
@@ -367,7 +403,8 @@ class TestProjectScaffolder:
         project_path.mkdir()
 
         with pytest.raises(
-            ScaffoldingError, match="CrewAI project structure is invalid"
+            ProjectStructureError,
+            match="Invalid CrewAI project structure: missing src directory",
         ):
             scaffolder._validate_project_structure(project_path)
 

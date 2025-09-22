@@ -309,11 +309,32 @@ def generate(prompt: str, name: Optional[str] = None):
         except ValidationError as e:
             raise click.ClickException(f"Validation error: {e}")
 
-        # Step 4: Initialize project scaffolder
-        click.echo("🔧 Initializing project scaffolder...")
+        # Step 4: Create progress tracker and initialize project scaffolder
+        click.echo("🔧 Initializing project scaffolder with progress tracking...")
         try:
-            scaffolder = ProjectScaffolder()
-            click.echo("✅ Scaffolder ready")
+            # Create progress tracker with initial steps
+            initial_steps = [
+                ProgressStep(
+                    "analyze_prompt", "Analyzing prompt for requirements", 5.0
+                ),
+                ProgressStep(
+                    "generate_agents", "Generating agent configurations", 15.0
+                ),
+                ProgressStep("generate_tasks", "Creating task definitions", 10.0),
+                ProgressStep("select_tools", "Selecting appropriate tools", 3.0),
+                ProgressStep(
+                    "create_scaffold", "Creating CrewAI project structure", 8.0
+                ),
+                ProgressStep("populate_files", "Populating project files", 4.0),
+            ]
+
+            progress_tracker = ProgressTracker(initial_steps)
+            progress_callback = create_progress_callback()
+            progress_tracker.add_callback(progress_callback)
+
+            # Initialize scaffolder with progress tracker
+            scaffolder = ProjectScaffolder(progress_tracker=progress_tracker)
+            click.echo("✅ Scaffolder ready with progress tracking")
         except Exception as e:
             raise click.ClickException(f"Failed to initialize scaffolder: {e}")
 
@@ -364,7 +385,6 @@ def generate(prompt: str, name: Optional[str] = None):
             project_path = scaffolder.generate_project(
                 generation_request,
                 current_dir,
-                progress_tracker=progress_tracker,
                 streaming_callbacks=streaming_callbacks,
             )
 

@@ -80,14 +80,18 @@ class TestCLIProgressIntegration:
         # Check success
         assert result.exit_code == 0
 
-        # Verify scaffolder was called with progress tracker
+        # Verify scaffolder was instantiated with progress_tracker
+        mock_scaffolder_class.assert_called_once()
+        args, kwargs = mock_scaffolder_class.call_args
+        assert "progress_tracker" in kwargs
+        assert isinstance(kwargs["progress_tracker"], ProgressTracker)
+
+        # Verify scaffolder.generate_project was called with streaming_callbacks only
         mock_scaffolder.generate_project.assert_called_once()
         args, kwargs = mock_scaffolder.generate_project.call_args
-
-        assert "progress_tracker" in kwargs
         assert "streaming_callbacks" in kwargs
-        assert isinstance(kwargs["progress_tracker"], ProgressTracker)
         assert isinstance(kwargs["streaming_callbacks"], StreamingCallbacks)
+        assert "progress_tracker" not in kwargs
 
     @patch("crewforge.cli.main.ProjectScaffolder")
     @patch("crewforge.cli.main.os.getenv")
@@ -206,10 +210,12 @@ class TestCLIProgressIntegration:
         assert "Failed" in output
         assert "CrewAI command failed" in output
 
-    def test_progress_tracker_step_definitions_in_cli(self):
+    @patch("crewforge.cli.main.ProjectScaffolder")
+    @patch("crewforge.cli.main.os.getenv")
+    def test_progress_tracker_step_definitions_in_cli(
+        self, mock_getenv, mock_scaffolder_class, cli_runner
+    ):
         """Test that CLI creates progress tracker with correct step definitions."""
-        from crewforge.cli.main import generate
-
         # The expected steps that should be created in the CLI
         expected_steps = [
             "analyze_prompt",
@@ -220,14 +226,25 @@ class TestCLIProgressIntegration:
             "populate_files",
         ]
 
-        # This test verifies the step IDs match what the ProjectScaffolder expects
-        # by checking the hardcoded step definitions in the CLI
-        import inspect
+        # Setup mocks
+        mock_getenv.return_value = "test-api-key"
+        mock_scaffolder = Mock()
+        mock_scaffolder.generate_project.return_value = "/test/project/path"
+        mock_scaffolder_class.return_value = mock_scaffolder
 
-        source = inspect.getsource(generate)
+        # Run command
+        cli_runner.invoke(generate, ["--name", "test-crew", "Create a test crew"])
 
+        # Verify scaffolder was instantiated with correct progress tracker steps
+        mock_scaffolder_class.assert_called_once()
+        args, kwargs = mock_scaffolder_class.call_args
+        progress_tracker = kwargs["progress_tracker"]
+
+        # Check that all expected steps were created
         for step_id in expected_steps:
-            assert step_id in source, f"Expected step '{step_id}' not found in CLI"
+            assert step_id in [
+                step.id for step in progress_tracker.steps
+            ], f"Expected step '{step_id}' not found"
 
 
 class TestProgressEventHandling:
