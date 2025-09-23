@@ -1,0 +1,42 @@
+initiate_the_six_thinking_hats_task:
+  description: >
+    Initiate the Six Thinking Hats session to evaluate the startup idea.
+  expected_output: >
+    A structured session plan outlining the sequence of the Six Thinking Hats methodology, including time allocations for each hat.
+  agent: six_thinking_hats_facilitator
+conduct_the_white_hat_session_task:
+  description: >
+    Conduct the White Hat session to gather factual information about the startup idea.
+  expected_output: >
+    A comprehensive list of facts, data, and information relevant to the startup idea, including market research and competitive analysis.
+  agent: cto_advisor
+conduct_the_red_hat_session_to_task:
+  description: >
+    Conduct the Red Hat session to explore emotional responses and gut feelings about the startup idea.
+  expected_output: >
+    A summary of emotional reactions and intuitive insights from the team regarding the startup idea.
+  agent: cmo_advisor
+conduct_the_black_hat_session_task:
+  description: >
+    Conduct the Black Hat session to identify potential risks and challenges associated with the startup idea.
+  expected_output: >
+    A detailed list of potential risks, challenges, and areas of concern that could impact the startup's success.
+  agent: cfo_advisor
+conduct_the_yellow_hat_session_task:
+  description: >
+    Conduct the Yellow Hat session to highlight the benefits and opportunities of the startup idea.
+  expected_output: >
+    A list of potential benefits, opportunities, and positive aspects of the startup idea.
+  agent: cpo_advisor
+conduct_the_green_hat_session_task:
+  description: >
+    Conduct the Green Hat session to brainstorm creative solutions and innovative ideas for the startup.
+  expected_output: >
+    A collection of creative ideas, alternative solutions, and innovative approaches to enhance the startup idea.
+  agent: vc_advisor
+conduct_the_blue_hat_session_t_task:
+  description: >
+    Conduct the Blue Hat session to summarize the findings and outline next steps.
+  expected_output: >
+    A comprehensive summary of the evaluation process, including key insights from each hat and recommended next steps for the startup.
+  agent: six_thinking_hats_facilitator
